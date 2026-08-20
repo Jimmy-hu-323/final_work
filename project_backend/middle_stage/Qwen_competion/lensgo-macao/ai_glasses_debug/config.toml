@@ -1,0 +1,72 @@
+## 联调服务端配置文件（参赛者直接编辑本文件）
+#
+# 使用方式：
+# 1) 修改下方 [qwenpaw] 的 base_url 与 agent_id（通常只需改这两项）
+# 2) 启动：glasses-server
+# 3) 需要变更配置时：保存本文件后重启 glasses-server
+
+[server]
+host = "0.0.0.0"
+port = 18765
+http_host = "0.0.0.0"
+http_port = 18866
+http_max_mb = 50
+media_dir = "./tmp_media"
+verbose_log = false
+
+[server.intent]
+demo = false
+intent_keywords = "识物|看看|这是啥|这是什么|面前|物体|拍照"
+finish_keywords = "退出|退下吧|退下|再见了|拜拜|没事了|不说了|你先退(?:下)?|结束(?:会话|对话)|算了"
+
+[server.token]
+# allow_any：只要非空 token 就放行（联调默认）
+# allowlist：只允许列表中的 token
+# regex：只允许正则 fullmatch 的 token
+mode = "allow_any" # allow_any | allowlist | regex
+allowlist = []
+regex = ""
+
+[qwenpaw]
+# 必改：QwenPaw 服务地址与 Agent ID
+base_url = "http://127.0.0.1:18088"
+agent_id = "lensgo-travel-director"
+timeout_s = 300
+video_prompt = "把这段视频当作旅途中正在发生的一刻来理解。必要时请调用视觉策展、记忆守护或媒体归档专家；最后只给用户简短、温暖、适合眼镜朗读的回应。"
+image_prompt = "把这张图片当作用户眼前的旅行场景来理解。必要时请调用视觉策展、记忆守护或媒体归档专家；最后只给用户地点故事、拍照建议或此刻值得留意的内容，避免技术性语句。"
+
+[qwenpaw.auth]
+# 是否在转发到 QwenPaw 时携带 Authorization（QwenPaw 开启 Web 认证且非 localhost 访问时设为 true）
+enabled = false
+# enabled=true 时二选一：填 token（优先），或填 username+password（自动登录并缓存 token）
+token = ""
+username = ""
+password = ""
+expires_in_s = 0 # 604800 = 7 天（默认）2592000 = 30 天 31536000 = 1 年 0 或 -1 = 永久令牌（100 年）
+
+[bridge]
+# 只读暴露 APP/眼镜上行与服务器下行事件。Token 必须通过环境变量提供。
+enabled = true
+history_size = 200
+token_env = "GLASSES_BRIDGE_TOKEN"
+
+[telegram]
+# 镜像 + 双向 Agent 交互。仅接受 TELEGRAM_CHAT_ID 指定的会话。
+enabled = true
+interactive = true
+bot_token_env = "TELEGRAM_BOT_TOKEN"
+chat_id_env = "TELEGRAM_CHAT_ID"
+
+[telegram.status]
+# 第二个 Bot：只展示设备、Router、Agent 协作和错误，不接受生活对话。
+enabled = true
+bot_token_env = "TELEGRAM_STATUS_BOT_TOKEN"
+chat_id_env = "TELEGRAM_STATUS_CHAT_ID"
+
+[client]
+# glasses-client（可选）命令行协议模拟工具配置
+ws_url = "ws://127.0.0.1:18765/chat"
+http_upload_url = "http://127.0.0.1:18866/api/chat/resources/upload"
+access_token = ""
+device_id = "2C:BE:EB:54:45:41"
+verbose_log = false

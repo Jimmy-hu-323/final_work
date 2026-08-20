@@ -1,0 +1,23 @@
+[Unit]
+Description=LensGo QwenPaw backend
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=jimmyhu
+Group=jimmyhu
+WorkingDirectory=/home/jimmyhu/qwenpaw_competition/middle_stage/Qwen_competion/qwen_compitition
+EnvironmentFile=/home/jimmyhu/qwenpaw_competition/middle_stage/Qwen_competion/.env.integrated
+Environment=QWENPAW_WORKING_DIR=/home/jimmyhu/qwenpaw_competition/middle_stage/Qwen_competion/workspace/qwenpaw
+Environment=COPAW_WORKING_DIR=/home/jimmyhu/qwenpaw_competition/middle_stage/Qwen_competion/workspace/qwenpaw
+Environment=QWENPAW_TELEMETRY_ENABLED=false
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/jimmyhu/qwenpaw_competition/middle_stage/Qwen_competion/.venv-linux/bin/qwenpaw app --host 127.0.0.1 --port 18088
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

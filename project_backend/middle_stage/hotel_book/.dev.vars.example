@@ -1,0 +1,3 @@
+# Copy to .dev.vars for local development and use the same secret in
+# Qwen_competion/.env.integrated. Keep this value off the phone and out of Git.
+HOTEL_BOOKING_SERVICE_TOKEN=replace-with-at-least-16-random-characters

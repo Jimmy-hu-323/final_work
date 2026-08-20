@@ -1,0 +1,66 @@
+name: amap-macau
+protocol: mcp
+endpoint:
+  transport: stdio
+  command: /home/jimmyhu/Desktop/qwen_compitition/qwenpaw-local-latest/.venv/bin/python
+  args:
+  - /home/jimmyhu/Desktop/amap-mcp/server.py
+  env:
+    AMAP_CONFIG_FILE:
+      source: literal
+      value: /home/jimmyhu/Desktop/amap-mcp/.env
+    AMAP_MAP_OUTPUT_DIR:
+      source: literal
+      value: /home/jimmyhu/Desktop/qwen_compitition/qwenpaw-local-latest/working/workspaces/default/media/travel_maps
+credentials: {}
+config:
+  display_name: 高德地图（澳门行程）
+  description: 澳门 POI、真实路线与路线图生成；密钥仅保存在本机受限文件中。
+enabled: true
+policy:
+  default_effect: ask
+  rules:
+  - subject: '*'
+    effect: allow
+    target:
+      kind: tool
+      name: amap_search_poi
+    principal:
+      source_type: '*'
+      source_value: '*'
+      subject_type: '*'
+      subject_value: '*'
+    condition: null
+  - subject: '*'
+    effect: allow
+    target:
+      kind: tool
+      name: amap_plan_route
+    principal:
+      source_type: '*'
+      source_value: '*'
+      subject_type: '*'
+      subject_value: '*'
+    condition: null
+  - subject: '*'
+    effect: allow
+    target:
+      kind: tool
+      name: amap_render_route_map
+    principal:
+      source_type: '*'
+      source_value: '*'
+      subject_type: '*'
+      subject_value: '*'
+    condition: null
+  - subject: '*'
+    effect: allow
+    target:
+      kind: tool
+      name: amap_build_itinerary
+    principal:
+      source_type: channel
+      source_value: lensgo-mobile
+      subject_type: all
+      subject_value: '*'
+    condition: null

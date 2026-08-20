@@ -1,0 +1,20 @@
+[Unit]
+Description=LensGo glasses, HTTP and Bridge backend
+Requires=lensgo-qwenpaw.service
+After=network-online.target lensgo-qwenpaw.service
+
+[Service]
+Type=simple
+User=jimmyhu
+Group=jimmyhu
+WorkingDirectory=/home/jimmyhu/qwenpaw_competition/middle_stage/Qwen_competion/lensgo-macao/ai_glasses_debug
+EnvironmentFile=/home/jimmyhu/qwenpaw_competition/middle_stage/Qwen_competion/.env.integrated
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/jimmyhu/qwenpaw_competition/middle_stage/Qwen_competion/.venv-linux/bin/python -m glasses.server --config /home/jimmyhu/qwenpaw_competition/middle_stage/Qwen_competion/config/lensgo.integrated.toml --qwenpaw-base-url http://127.0.0.1:18088 --qwenpaw-agent-id lensgo-travel-director
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

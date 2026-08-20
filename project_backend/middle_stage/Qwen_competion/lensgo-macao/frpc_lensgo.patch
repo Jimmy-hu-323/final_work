@@ -1,0 +1,15 @@
+--- /opt/frp/frpc.ini
++++ /opt/frp/frpc.ini
+@@ -35,0 +36,12 @@
++
++[lensgo-gateway]
++type = tcp
++local_ip = 127.0.0.1
++local_port = 8000
++remote_port = 8000
++
++[lensgo-qwenpaw]
++type = tcp
++local_ip = 127.0.0.1
++local_port = 18088
++remote_port = 18088

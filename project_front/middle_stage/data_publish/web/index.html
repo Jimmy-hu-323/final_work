@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>人流密度数据发布器</title>
+<link rel="stylesheet" href="/vendor/leaflet.css?v=1.9.4">
+<link rel="stylesheet" href="/styles.css?v=20260807-map-layout-fallback">
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <h1>人流密度数据发布器</h1>
+    <span class="pill" id="statusPill"><span class="dot"></span><span id="statusText">连接中…</span></span>
+    <span class="pill" id="statsPill">—</span>
+    <span class="spacer"></span>
+    <span class="pill" id="authPill"><span class="dot"></span><span id="authText">正在验证登录…</span></span>
+    <button class="btn sm ghost" id="logoutBtn" type="button">退出</button>
+  </header>
+
+  <nav class="tabs">
+    <button data-tab="map" class="active">地图发布</button>
+    <button data-tab="publish">批量发布</button>
+    <button data-tab="current">当前数据</button>
+    <button data-tab="history">发布历史</button>
+    <button data-tab="places">新增地点</button>
+    <button data-tab="admin" id="adminTabButton" hidden>部门管理</button>
+    <button data-tab="api">API 说明</button>
+  </nav>
+
+  <!-- ── 地图发布 ─────────────────────────────────────────────────── -->
+  <section class="tab-panel active" id="tab-map">
+    <div class="card">
+      <h2>在地图上发布</h2>
+      <p class="hint">
+        搜索高德上的任意地点，地图会跳过去；也可以直接点击地图上任何位置，
+        自动反查地址。选中后填人数即可发布，地点会同时登记进本库。
+      </p>
+
+      <div class="notice" id="amapNotice" style="display:none"></div>
+
+      <div class="row">
+        <label class="field" style="flex:0 1 170px">
+          限定城市
+          <select id="mapCity"></select>
+        </label>
+        <label class="field" style="flex:2 1 280px">
+          搜索地点
+          <input type="text" id="mapSearch" placeholder="例如：大三巴牌坊 / 官也街 / 威尼斯人 / 广州塔">
+        </label>
+        <button class="btn" id="mapSearchBtn" style="align-self:flex-end;margin-bottom:1px">搜索</button>
+        <button class="btn ghost" id="mapReloadBtn" style="align-self:flex-end;margin-bottom:1px">刷新已有数据</button>
+      </div>
+
+      <div class="map-layout">
+        <div class="list" id="mapResults">
+          <div class="empty">搜索结果会显示在这里。<br>也可以直接在右侧地图上点击任意位置。</div>
+        </div>
+        <div id="map"></div>
+      </div>
+
+      <div class="selected-panel" id="mapPanel" style="display:none">
+        <div class="row" style="margin-bottom:6px">
+          <strong id="panelTitle">已选位置</strong>
+          <span class="badge" id="panelSourceBadge"></span>
+          <span class="spacer"></span>
+          <button class="btn sm ghost" id="panelCloseBtn">关闭</button>
+        </div>
+        <div class="meta" id="panelAddress"></div>
+        <div class="meta" id="panelCoord"></div>
+        <div class="row" style="margin-top:10px">
+          <label class="field" style="flex:2 1 220px">名称<input type="text" id="panelName"></label>
+          <label class="field" style="flex:0 1 120px">
+            层级
+            <select id="panelLevel">
+              <option value="poi">景点</option>
+              <option value="street">街道</option>
+              <option value="district">区</option>
+            </select>
+          </label>
+          <label class="field" style="flex:0 1 130px">人数<input type="number" min="0" step="1" id="panelCount" placeholder="例如 860"></label>
+          <label class="field" style="flex:0 1 130px">
+            拥挤度
+            <select id="panelCrowd"><option value="">自动</option></select>
+          </label>
+        </div>
+        <div class="row">
+          <button class="btn primary" id="panelPublishBtn">发布这个位置的人数</button>
+          <span class="meta" id="panelExisting"></span>
+        </div>
+      </div>
+
+      <div class="legend" id="mapLegend" style="margin-top:14px"></div>
+    </div>
+  </section>
+
+  <!-- ── 批量发布 ─────────────────────────────────────────────────── -->
+  <section class="tab-panel" id="tab-publish">
+    <div class="cols">
+
+      <div class="card">
+        <h2>1. 搜索城市与景点</h2>
+        <p class="hint">先选城市，再按名称搜索区 / 街道 / 景点。中文名、英文名和别名都能搜。</p>
+        <div class="row">
+          <label class="field" style="flex:1 1 180px">
+            城市
+            <select id="citySelect"></select>
+          </label>
+          <label class="field" style="flex:2 1 220px">
+            搜索
+            <input type="text" id="regionSearch" placeholder="例如：大三巴 / Venetian / 官也街">
+          </label>
+        </div>
+        <div class="row">
+          <div class="seg" id="levelFilter">
+            <button data-level="" class="active">全部</button>
+            <button data-level="district">区</button>
+            <button data-level="street">街道</button>
+            <button data-level="poi">景点</button>
+          </div>
+          <span class="spacer"></span>
+          <button class="btn sm" id="addAllBtn">添加当前结果</button>
+        </div>
+        <div class="list" id="searchResults"><div class="empty">加载中…</div></div>
+      </div>
+
+      <div class="card">
+        <h2>2. 填写人数并发布</h2>
+        <p class="hint">留空拥挤度＝按人数和区域层级自动推导。一次发布为一个批次，可整批撤销。</p>
+        <div class="row">
+          <button class="btn sm" id="randomFillBtn">随机填充</button>
+          <button class="btn sm" id="clearBasketBtn">清空清单</button>
+          <span class="spacer"></span>
+          <span class="badge" id="basketCount">0 项</span>
+        </div>
+        <div class="list" id="basket"><div class="empty">还没有选择区域，从左侧点击「添加」。</div></div>
+        <div class="row" style="margin-top:12px">
+          <label class="field">发布者<input type="text" id="publisherInput" placeholder="例如：demo"></label>
+          <label class="field">观测时间<input type="datetime-local" id="observedInput"></label>
+        </div>
+        <div class="row">
+          <label class="field">备注（可选）<input type="text" id="noteInput" placeholder="例如：周末下午模拟数据"></label>
+        </div>
+        <div class="row">
+          <button class="btn primary" id="publishBtn">发布</button>
+          <span id="publishResult" class="badge" style="display:none"></span>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── 当前数据 ─────────────────────────────────────────────────── -->
+  <section class="tab-panel" id="tab-current">
+    <div class="card">
+      <h2>当前最新数据</h2>
+      <p class="hint">每个区域取最新一条读数。「无数据」和「0 人」是两种不同状态，颜色也不同。</p>
+      <div class="row">
+        <label class="field" style="flex:0 1 200px">城市<select id="currentCity"></select></label>
+        <label class="field" style="flex:0 1 160px">
+          层级
+          <select id="currentLevel">
+            <option value="">全部</option>
+            <option value="district">区</option>
+            <option value="street">街道</option>
+            <option value="poi">景点</option>
+          </select>
+        </label>
+        <label class="field" style="flex:0 1 160px">
+          范围
+          <select id="currentEmpty">
+            <option value="0">只看有数据的</option>
+            <option value="1">包含无数据</option>
+          </select>
+        </label>
+        <button class="btn sm" id="refreshCurrentBtn" style="align-self:flex-end;margin-bottom:1px">刷新</button>
+      </div>
+      <div class="legend" id="legend"></div>
+      <div class="table-scroll">
+        <table id="currentTable">
+          <thead>
+            <tr><th>名称</th><th>层级</th><th>所属</th><th class="num">人数</th><th>拥挤度</th><th>更新于</th></tr>
+          </thead>
+          <tbody><tr><td colspan="6" class="empty">加载中…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 发布历史 ─────────────────────────────────────────────────── -->
+  <section class="tab-panel" id="tab-history">
+    <div class="card">
+      <h2>发布历史</h2>
+      <p class="hint">撤销会删除该批次写入的全部读数，批次记录本身保留痕迹。</p>
+      <div class="row"><button class="btn sm" id="refreshHistoryBtn">刷新</button></div>
+      <div class="table-scroll">
+        <table id="historyTable">
+          <thead>
+            <tr><th>批次</th><th>发布者</th><th class="num">条数</th><th>状态</th><th>时间</th><th>备注</th><th></th></tr>
+          </thead>
+          <tbody><tr><td colspan="7" class="empty">加载中…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 新增地点 ─────────────────────────────────────────────────── -->
+  <section class="tab-panel" id="tab-places">
+    <div class="card" style="max-width:720px">
+      <h2>新增区 / 街道 / 景点</h2>
+      <p class="hint">
+        坐标可以填 WGS-84（从 GPS、维基、OSM 抄来的）或 GCJ-02（高德上取的），
+        选对来源即可，服务端会统一转成 GCJ-02 入库。
+      </p>
+      <div class="row">
+        <label class="field">城市<select id="newCity"></select></label>
+        <label class="field">
+          层级
+          <select id="newLevel">
+            <option value="poi">景点</option>
+            <option value="street">街道</option>
+            <option value="district">区</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <label class="field">名称<input type="text" id="newName" placeholder="例如：恋爱巷"></label>
+        <label class="field">英文名（可选）<input type="text" id="newNameEn" placeholder="Travessa da Paixão"></label>
+      </div>
+      <div class="row">
+        <label class="field">别名（可选，逗号分隔）<input type="text" id="newAliases" placeholder="爱情巷, Love Lane"></label>
+      </div>
+      <div class="row">
+        <label class="field">上级区域（可选）<select id="newParent"><option value="">（无）</option></select></label>
+      </div>
+      <div class="row">
+        <label class="field">经度 lng<input type="text" id="newLng" placeholder="113.5406"></label>
+        <label class="field">纬度 lat<input type="text" id="newLat" placeholder="22.1976"></label>
+        <label class="field">
+          坐标系
+          <select id="newCoordSystem">
+            <option value="wgs84">WGS-84（GPS / OSM）</option>
+            <option value="gcj02">GCJ-02（高德）</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <label class="field">影响半径（米，可选）<input type="number" id="newRadius" placeholder="120"></label>
+      </div>
+      <div class="row"><button class="btn primary" id="createRegionBtn">创建</button></div>
+    </div>
+  </section>
+
+  <!-- ── 部门管理（管理员）───────────────────────────────────────── -->
+  <section class="tab-panel" id="tab-admin">
+    <div class="admin-intro">
+      <div>
+        <h2>部门权限管理</h2>
+        <p>创建内部账号、为软件签发独立 API Key，并查看重要操作记录。</p>
+      </div>
+      <span class="badge">仅管理员可见</span>
+    </div>
+
+    <div class="card">
+      <div class="card-heading">
+        <div><h2>部门账号</h2><p class="hint">账号不开放注册，由管理员在这里创建。</p></div>
+        <button class="btn sm" id="refreshUsersBtn" type="button">刷新</button>
+      </div>
+      <form id="createUserForm" class="admin-form">
+        <label class="field">用户名<input id="adminUsername" type="text" autocomplete="off" required placeholder="例如 crowd-publisher"></label>
+        <label class="field">显示名称<input id="adminDisplayName" type="text" autocomplete="off" placeholder="例如 人流发布组"></label>
+        <label class="field">初始密码<input id="adminPassword" type="password" autocomplete="new-password" required minlength="8" placeholder="至少 8 位"></label>
+        <label class="field">角色
+          <select id="adminRole">
+            <option value="publisher">发布员</option>
+            <option value="reviewer">审核员</option>
+            <option value="viewer">只读人员</option>
+            <option value="admin">管理员</option>
+          </select>
+        </label>
+        <button class="btn primary form-action" id="createUserBtn" type="submit">创建账号</button>
+      </form>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>用户名</th><th>显示名称</th><th>角色</th><th>状态</th><th>最后登录</th><th>创建时间</th></tr></thead>
+          <tbody id="adminUsersBody"><tr><td colspan="6" class="empty">打开本页后加载</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-heading">
+        <div><h2>软件 API Key</h2><p class="hint">每个软件或设备使用独立 Key。完整 Key 只会显示一次。</p></div>
+        <button class="btn sm" id="refreshKeysBtn" type="button">刷新</button>
+      </div>
+      <form id="createKeyForm" class="key-form">
+        <div class="admin-form key-main-fields">
+          <label class="field">名称<input id="adminKeyName" type="text" required placeholder="例如 qwenpaw-production"></label>
+          <label class="field">到期时间（可选）<input id="adminKeyExpires" type="datetime-local"></label>
+        </div>
+        <fieldset class="scope-picker">
+          <legend>权限 scopes（至少选择一项）</legend>
+          <label><input type="checkbox" name="adminKeyScope" value="crowd:read"> 读取人流数据</label>
+          <label><input type="checkbox" name="adminKeyScope" value="crowd:publish"> 发布人流数据</label>
+          <label><input type="checkbox" name="adminKeyScope" value="crowd:regions:write"> 管理城市与地点</label>
+          <label><input type="checkbox" name="adminKeyScope" value="crowd:batches:revert"> 撤销发布批次</label>
+          <label><input type="checkbox" name="adminKeyScope" value="crowd:admin"> 管理权限</label>
+        </fieldset>
+        <button class="btn primary" id="createKeyBtn" type="submit">创建 API Key</button>
+      </form>
+
+      <div class="one-time-key" id="createdKeyPanel" hidden role="status" aria-live="polite">
+        <div>
+          <strong>请立即复制保存</strong>
+          <p>关闭后无法再次查看完整 Key；遗失时请撤销并重新创建。</p>
+        </div>
+        <code id="createdKeyValue"></code>
+        <div class="row key-actions">
+          <button class="btn primary" id="copyCreatedKeyBtn" type="button">复制 Key</button>
+          <button class="btn ghost" id="dismissCreatedKeyBtn" type="button">我已保存，关闭</button>
+        </div>
+      </div>
+
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>名称</th><th>前缀</th><th>权限</th><th>状态</th><th>到期时间</th><th>最后使用</th><th>操作</th></tr></thead>
+          <tbody id="adminKeysBody"><tr><td colspan="7" class="empty">打开本页后加载</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-heading">
+        <div><h2>审计记录</h2><p class="hint">用于追踪账号、Key、发布与撤销操作。</p></div>
+        <div class="row compact-row">
+          <label class="field audit-limit">显示条数<input id="auditLimit" type="number" min="1" max="500" value="100"></label>
+          <button class="btn sm" id="refreshAuditBtn" type="button">刷新</button>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>时间</th><th>操作者</th><th>来源</th><th>动作</th><th>对象</th><th>结果</th><th>IP</th></tr></thead>
+          <tbody id="adminAuditBody"><tr><td colspan="7" class="empty">打开本页后加载</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── API 说明 ─────────────────────────────────────────────────── -->
+  <section class="tab-panel" id="tab-api">
+    <div class="card">
+      <h2>HTTP 接口</h2>
+      <p class="hint">
+        所有响应都是 JSON。坐标一律为 <code class="inline">GCJ-02</code> 的
+        <code class="inline">[lng, lat]</code>，与主项目高德底图一致。
+        网页由部门账号登录后使用；软件调用请在
+        <code class="inline">Authorization: Bearer &lt;API_KEY&gt;</code> 中提供管理员签发的独立 Key。
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>方法</th><th>路径</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><span class="api-method post">POST</span></td><td><code>/api/auth/login</code></td><td>部门账号登录并建立安全会话</td></tr>
+            <tr><td><span class="api-method get">GET</span></td><td><code>/api/auth/me</code></td><td>当前登录用户</td></tr>
+            <tr><td><span class="api-method get">GET</span></td><td><code>/api/health</code></td><td>服务状态</td></tr>
+            <tr><td><span class="api-method get">GET</span></td><td><code>/api/meta</code></td><td>层级、拥挤度分级、推导阈值、当前权限</td></tr>
+            <tr><td><span class="api-method get">GET</span></td><td><code>/api/cities?q=</code></td><td>搜索城市</td></tr>
+            <tr><td><span class="api-method get">GET</span></td><td><code>/api/regions?city_id=&amp;level=&amp;q=&amp;limit=&amp;offset=</code></td><td>搜索区 / 街道 / 景点</td></tr>
+            <tr><td><span class="api-method get">GET</span></td><td><code>/api/regions/{id}</code></td><td>区域详情</td></tr>
+            <tr><td><span class="api-method get">GET</span></td><td><code>/api/regions/{id}/history</code></td><td>该区域的历史读数</td></tr>
+            <tr><td><span class="api-method get">GET</span></td><td><code>/api/density/latest?city_id=&amp;level=&amp;include_empty=</code></td><td><strong>地图页主接口</strong>：每区域最新密度</td></tr>
+            <tr><td><span class="api-method get">GET</span></td><td><code>/api/amap/status</code></td><td>高德 Key 是否已配置</td></tr>
+            <tr><td><span class="api-method get">GET</span></td><td><code>/api/amap/search?q=&amp;city=</code></td><td>高德 POI 关键字搜索（服务端代理）</td></tr>
+            <tr><td><span class="api-method get">GET</span></td><td><code>/api/amap/around?lng=&amp;lat=&amp;radius=</code></td><td>高德周边搜索</td></tr>
+            <tr><td><span class="api-method get">GET</span></td><td><code>/api/amap/regeo?lng=&amp;lat=</code></td><td>逆地理编码（坐标 → 地址）</td></tr>
+            <tr><td><span class="api-method post">POST</span></td><td><code>/api/regions/from-amap</code></td><td>把高德地点登记为可发布区域（同一 POI 不重复建）</td></tr>
+            <tr><td><span class="api-method post">POST</span></td><td><code>/api/readings</code></td><td>发布一批数据（一次 = 一个批次）</td></tr>
+            <tr><td><span class="api-method get">GET</span></td><td><code>/api/batches</code></td><td>发布历史</td></tr>
+            <tr><td><span class="api-method delete">DELETE</span></td><td><code>/api/batches/{id}</code></td><td>撤销批次</td></tr>
+            <tr><td><span class="api-method post">POST</span></td><td><code>/api/cities</code> / <code>/api/regions</code></td><td>新增城市 / 区域</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>调用示例</h2>
+      <p class="hint">发布数据：</p>
+      <pre id="curlPublish"></pre>
+      <p class="hint">地图前端读取最新密度：</p>
+      <pre id="curlLatest"></pre>
+      <p class="hint">返回结构（节选）：</p>
+      <pre>{
+  "generated_at": "2026-07-26T12:00:00Z",
+  "count": 24,
+  "items": [
+    {
+      "region_id": "macau-poi-ruins-st-paul",
+      "name": "大三巴牌坊",
+      "level": "poi",
+      "parent_id": "macau-s-sao-paulo",
+      "center": [113.5457, 22.1947],
+      "coord_system": "gcj02",
+      "radius_m": 120,
+      "geometry": null,
+      "reading": {
+        "people_count": 860,
+        "crowd_level": 3,
+        "observed_at": "2026-07-26T11:58:00Z",
+        "batch_id": "batch_9ae953c3aa39"
+      }
+    }
+  ]
+}</pre>
+      <p class="hint">
+        <code class="inline">reading</code> 为 <code class="inline">null</code> 表示该区域**没有数据**，
+        请勿当作 0 人渲染。<code class="inline">geometry</code> 目前为 null，
+        当前版本用 <code class="inline">center</code> +
+        <code class="inline">radius_m</code> 作为落点，后续补入区域多边形后即可直接画色块。
+      </p>
+    </div>
+  </section>
+
+</div>
+
+<div id="toast"></div>
+<script src="/vendor/leaflet.js"></script>
+<script src="/app.js?v=20260819-auth"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+tmp_media/
+.venv/
+__pycache__/
+*.pyc
+.idea/
+*.egg-info/
+glasses.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/

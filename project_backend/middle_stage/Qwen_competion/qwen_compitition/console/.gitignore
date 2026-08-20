@@ -1,0 +1,11 @@
+
+# test coverage
+coverage/
+
+# generated frontend and browser QA artifacts
+dist-mobile/
+.playwright-cli/
+
+# ai related
+.wiki/
+graphify-out/

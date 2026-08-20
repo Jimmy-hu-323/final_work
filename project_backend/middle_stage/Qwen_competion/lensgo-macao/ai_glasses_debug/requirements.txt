@@ -1,0 +1,6 @@
+# 运行时依赖（与 pyproject.toml 对齐）
+websockets>=12.0
+aiohttp>=3.9.0
+
+# 开发 / 测试（可选）
+# pip install -e ".[dev]"

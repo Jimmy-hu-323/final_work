@@ -1,0 +1,37 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "LensGo 澳门旅游助手（本地版）",
+  "version": "0.0.1",
+  "identifier": "io.lensgo.macao.mobile.local",
+  "build": {
+    "frontendDist": "../dist-mobile",
+    "devUrl": "http://10.0.2.2:5173",
+    "beforeDevCommand": "vite --host 0.0.0.0 --mode mobile",
+    "beforeBuildCommand": "npm run build:mobile"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "LensGo 澳门旅游助手（本地版）",
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": {
+        "default-src": "'self'",
+        "connect-src": "'self' http: https: ws: wss: ipc: http://ipc.localhost",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "font-src": "'self' data: https://fonts.gstatic.com",
+        "img-src": "'self' asset: http://asset.localhost blob: data: https: http:"
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "resources": [],
+    "android": {
+      "minSdkVersion": 24
+    }
+  }
+}

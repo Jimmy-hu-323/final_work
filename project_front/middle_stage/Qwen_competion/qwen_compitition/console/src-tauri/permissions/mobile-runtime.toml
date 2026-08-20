@@ -1,0 +1,21 @@
+[[permission]]
+identifier = "mobile-runtime"
+description = "Allows the bundled LensGo mobile frontend to use its local settings and model runtime."
+commands.allow = [
+  "mobile_load_settings",
+  "mobile_save_settings",
+  "mobile_load_crowd_settings",
+  "mobile_save_crowd_settings",
+  "mobile_fetch_crowd_places",
+  "mobile_test_provider",
+  "mobile_chat",
+  "mobile_test_qwenpaw",
+  "mobile_qwenpaw_chat",
+  "mobile_qwenpaw_latest_itinerary",
+  "mobile_hotel_gateway",
+  "mobile_qwenpaw_route",
+  "mobile_upload_cloud_photo",
+  "mobile_delete_cloud_photo",
+  "mobile_analyze_image",
+  "mobile_generate_image",
+]

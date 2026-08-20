@@ -1,0 +1,342 @@
+# middle_stage Agent 项目说明
+
+> 生成时间：2026-08-08（基于远端 `/home/jimmyhu/qwenpaw_competition/middle_stage` 的源码、运行配置、工作区和当前进程检查）
+>
+> 本文重点说明当前 LensGo 多 Agent 链路、每个 Agent 的职责，以及它们在 QwenPaw 中如何被启动、路由和协作。文中不记录任何 Token、API Key 或 SSH 密码。
+
+## 1. 先给结论
+
+这里的 LensGo 不是“多个 Agent 同时抢答”，而是一个**主 Agent + 专家 Agent**的星型协作系统：
+
+- `lensgo-travel-director` 是唯一面向用户的主 Agent，负责理解用户意图、决定是否咨询专家、组织最终回答。
+- `lensgo-vision-curator`、`lensgo-memory-keeper`、`lensgo-media-archivist`、`lensgo-pose-coach` 是被主 Agent 按需调用的专业 Agent。
+- `default` 和 `QwenPaw_QA_Agent_0.2` 是 QwenPaw 的通用/内置 Agent，不属于 LensGo 的用户对话主链路。
+- 7 个本地 Agent 都运行在同一个 QwenPaw Python 服务进程中，每个 Agent 通过独立 `Workspace` 隔离配置、会话、历史、私有记忆和工具；它们不是 7 个独立的操作系统进程。
+- Agent 之间的实际消息通道是 QwenPaw 本机 HTTP API + SSE：主 Agent 的 `chat_with_agent` 工具向同一个 QwenPaw 服务发请求，并用 `X-Agent-Id` 指定目标 Agent。
+- Router 会在请求进入主 Agent 前写入共享 `LensGoContext`；这不是把所有 Agent 的私有记忆合并，而是给本次请求附加用户范围的公共上下文。
+
+## 2. 当前运行拓扑
+
+```mermaid
+flowchart TD
+    U["AI 眼镜 / LensGo 大使 Bot"] --> R["glasses-server Router"]
+    R --> M["共享 LensGoMemory\ntraveler_id + 最近 5 条 observation"]
+    R --> Q["QwenPaw API\n127.0.0.1:18088\nX-Agent-Id=lensgo-travel-director"]
+    Q --> T["lensgo-travel-director\n用户入口 / 主编排"]
+    T -->|"按需 chat_with_agent"| V["lensgo-vision-curator\n图片/视频理解"]
+    T -->|"按需 chat_with_agent"| K["lensgo-memory-keeper\n记忆整理"]
+    T -->|"按需 chat_with_agent"| A["lensgo-media-archivist\n媒体策略"]
+    T -->|"按需 chat_with_agent"| P["lensgo-pose-coach\n姿势设计"]
+    V --> T
+    K --> T
+    A --> T
+    P --> T
+    T --> S["最终短回答 / 生成图片 / 文件投递"]
+    S --> R
+    R --> U
+```
+
+图中的专家箭头是“主 Agent 通过工具发起的咨询”，不是 Router 自动把请求广播给所有专家。主 Agent 可以只调用一个专家，也可以根据任务先后调用多个专家；源码没有固定的自动 DAG，也没有要求所有请求都经过所有专家。
+
+## 3. 当前实际注册的 7 个 Agent
+
+当前配置文件是：
+
+```text
+Qwen_competion/workspace/qwenpaw/config.json
+```
+
+当前通过 `GET http://127.0.0.1:18088/api/agents` 看到的 7 个 Agent 均为 `startup_status=running`。
+
+### 3.1 QwenPaw 系统级 Agent
+
+| Agent ID | 作用 | 当前模型/工具边界 | 是否属于 LensGo 主链路 |
+|---|---|---|---|
+| `default` | 通用个人助手；没有指定 Agent 时的默认入口 | `glm-5.2`；工具最全，含 Agent 管理工具 | 否。全局配置 `active_agent` 仍为 `default`，但 LensGo 请求会显式指定主 Agent |
+| `QwenPaw_QA_Agent_0.2` | QwenPaw 安装、配置、源码和文档问答；强调先读本地文件再回答 | API 返回的 `active_model` 为 null；工具较少，不含 `chat_with_agent` 等协作工具 | 否。它是内置 QA 助手 |
+
+### 3.2 LensGo Agent
+
+| Agent ID | 角色 | 谁调用它 | 主要产出 |
+|---|---|---|---|
+| `lensgo-travel-director` | 旅行陪伴总监、唯一用户入口、意图理解和结果编排 | `glasses-server` 通过 `X-Agent-Id` 直接路由；用户也可在 QwenPaw 控制台选择 | 面向用户的中文短回答、旅行/拍照建议、必要的工具调用和专家综合结论 |
+| `lensgo-vision-curator` | 视觉策展专家 | 主 Agent 按图片/视频任务调用 | 地点线索、活动、人物互动、光线、构图、风险、纪念意义；看不清时明确未知，不凭脸推断敏感身份 |
+| `lensgo-memory-keeper` | 记忆守护专家 | 主 Agent 在需要读取/整理旅程语境、偏好和重要时刻时调用 | 按 `traveler_id` 整理偏好、旅程、同行关系、重要时刻候选；区分事实、推断和未知，并给出重要度、保存期限、待确认项 |
+| `lensgo-media-archivist` | 媒体归档专家 | 主 Agent 在涉及保存、删除、归档或媒体生命周期时调用 | 媒体去重、归属、保留期限、隐私和删除建议；普通素材默认短期保存，重要内容需用户明确要求或确认 |
+| `lensgo-pose-coach` | 旅行拍照姿势设计专家 | 主 Agent 在用户询问 pose、摆姿势或参考图时调用 | 一个主姿势、动作分解、眼镜口令、安全提醒、参考图提示词和可选替代姿势 |
+
+所有 LensGo Agent 的模型配置都指向：
+
+```text
+provider_id = aliyun-tokenplan-intl-custom
+model       = qwen3.7-plus
+```
+
+它们的角色主要由各自工作区中的 `AGENTS.md`、`SOUL.md`、`PROFILE.md` 组成。LensGo 的公开角色定义位于：
+
+```text
+Qwen_competion/lensgo-macao/qwenpaw_agents/<agent-id>/AGENTS.md
+Qwen_competion/lensgo-macao/qwenpaw_agents/<agent-id>/SOUL.md
+```
+
+运行时实际使用的是对应工作区中的同名文件：
+
+```text
+Qwen_competion/workspace/qwenpaw/workspaces/<agent-id>/
+```
+
+## 4. Agent 是怎样被启动的
+
+QwenPaw 的多 Agent 管理器是：
+
+```text
+Qwen_competion/qwen_compitition/src/qwenpaw/app/multi_agent_manager.py
+```
+
+启动过程如下：
+
+1. QwenPaw 读取全局 `config.json`，获得 Agent profile、工作区路径和启用状态。
+2. `MultiAgentManager.start_all_configured_agents()` 启动所有 `enabled=true` 的 profile。
+3. `default` 和内置 QA Agent 作为核心阶段启动；其余自定义 Agent 受并发启动上限控制。
+4. 每个 profile 创建一个 `Workspace(agent_id, workspace_dir)`。
+5. `Workspace.start()` 读取该 Agent 的 `agent.json`，然后初始化自己的 ChatManager、ReMeLight 私有记忆、ChannelManager、Driver/MCP 管理、Cron 管理、配置 watcher 和工具/插件注册表。
+6. Agent 配置和 Driver 配置有 watcher 监测；修改配置后可以单 Agent reload，不必重启其他 Agent。
+
+每个 Agent 都有独立的状态目录，例如：
+
+```text
+.../workspaces/lensgo-travel-director/agent.json
+.../workspaces/lensgo-travel-director/chats.json
+.../workspaces/lensgo-travel-director/history.db
+.../workspaces/lensgo-travel-director/sessions/
+.../workspaces/lensgo-travel-director/AGENTS.md
+.../workspaces/lensgo-travel-director/SOUL.md
+.../workspaces/lensgo-travel-director/MEMORY.md
+```
+
+因此，专家 Agent 不会天然看到主 Agent 的完整历史；它拥有自己的会话和私有记忆。主 Agent 如果希望专家理解本轮上下文，需要把用户原话、地点、人物数量、限制条件或 `LensGoContext` 中的必要信息放到调用消息里。
+
+### 当前观察到的服务进程
+
+当前部署中：
+
+```text
+QwenPaw app       : 127.0.0.1:18088
+眼镜 glasses.server: WebSocket 127.0.0.1:18765
+                    HTTP      127.0.0.1:18000
+```
+
+QwenPaw 的 7 个 Agent 是同一个 QwenPaw app 进程内的 7 个 `Workspace`。`glasses.server` 是另一个进程，负责设备协议、媒体上传、Router、SSE 转发和 Telegram Bridge。
+
+## 5. 一次用户请求的完整运行过程
+
+### 5.1 文字请求
+
+1. 眼镜 APP 通过 WebSocket `/chat` 发送 `askType=1` 的文字；Telegram 文字也会复用在线设备的会话。
+2. `glasses/server/ws_handler.py` 校验 `access_token` 和 `device_id`，从 JWT 得到 `userId`，并为 `(userId, device_id)` 保持一个 QwenPaw 会话 ID。
+3. Router 调用 `glasses/server/lensgo_memory.py`：
+   - 用 `sha256(user_id)[:16]` 生成稳定但不可逆的 `traveler_id`；
+   - 在共享 SQLite 中写入 observation；
+   - 读取同一旅客最近 5 条 observation；
+   - 生成 `LensGoContext: {...}` 文本并附加到用户输入。
+4. Router 调用 QwenPaw：
+
+```http
+POST http://127.0.0.1:18088/api/console/chat
+X-Agent-Id: lensgo-travel-director
+Content-Type: application/json
+```
+
+请求体的核心字段为：
+
+```json
+{
+  "input": [{"role": "user", "content": [{"type": "text", "text": "..."}]}],
+  "session_id": "设备对应的会话 ID",
+  "chat_id": "设备对应的会话 ID",
+  "user_id": "认证后的 userId",
+  "channel": "..."
+}
+```
+
+5. QwenPaw 根据主 Agent 的 `AGENTS.md/SOUL.md/PROFILE.md`、当前会话、技能和工具运行 ReAct/工具循环。
+6. 主 Agent 如果需要专家，就调用 `chat_with_agent`；专家答复回到主 Agent 的工具结果中。
+7. 主 Agent 去掉内部 Agent 名、JSON、置信度和技术错误，生成适合眼镜朗读的简短中文。
+8. QwenPaw 通过 SSE 流式返回，`glasses-server` 转成 `SCChat` 分片；APP 接收后 TTS 播放，Bridge/Telegram 可镜像最终结果。
+
+### 5.2 图片请求
+
+1. 眼镜上传 `askType=2` 或意图流程的 `askType=3` 图片。
+2. Router 将图片保存到按用户隔离的媒体目录，并先上传到 QwenPaw `/api/console/upload`。
+3. Router 再把“文字 prompt + image content block”作为多模态消息发送给 `lensgo-travel-director`。
+4. 主 Agent 按职责调用 `lensgo-vision-curator`，将视觉结论作为内部材料；最终仍由主 Agent 回复用户。
+5. 如果模型产生图片，`qwenpaw_bridge.py` 负责把生成图复制到允许的工作区媒体目录，并通过 Bridge/Telegram 镜像；这与“谁负责理解图片”是两条不同路径。
+
+### 5.3 视频请求
+
+视频通过 HTTP 上传接口进入 Router，Router 上传到 QwenPaw，再以 video content block 发给主 Agent。主 Agent 可以咨询 `lensgo-vision-curator`，最终结果沿原 WebSocket 会话流式返回。
+
+### 5.4 姿势参考图
+
+这是当前最明确的两段式流程：
+
+1. `lensgo-travel-director` 用 `chat_with_agent` 把场景、人物数量、地点和限制交给 `lensgo-pose-coach`。
+2. `lensgo-pose-coach` 只返回姿势设计和参考图 prompt，不直接向用户发图。
+3. 主 Agent 在自己的会话中调用 `generate_pose_reference`。
+4. 生成成功后主 Agent 必须紧接着调用 `send_file_to_user`，把同一 `file_path` 发到用户和 LensGo Bridge。
+5. 如果专家或生图失败，主 Agent 仍然给出文字姿势建议，不让整个会话失败。
+
+## 6. Agent 之间的通信实现
+
+核心实现文件：
+
+```text
+Qwen_competion/qwen_compitition/src/qwenpaw/agents/tools/agent_management.py
+Qwen_competion/qwen_compitition/src/qwenpaw/app/agent_context.py
+Qwen_competion/qwen_compitition/src/qwenpaw/app/routers/agents.py
+```
+
+### 6.1 同步咨询：`chat_with_agent`
+
+主 Agent 调用时，框架会：
+
+1. 先通过 `/api/agents` 验证目标 Agent 存在且启用。
+2. 如果没有传 `session_id`，生成类似下面的唯一会话 ID：
+
+```text
+<from_agent>:to:<to_agent>:<timestamp>:<uuid>
+```
+
+3. 给消息加上身份前缀：
+
+```text
+[Agent lensgo-travel-director requesting] ...
+```
+
+4. 将 `X-Agent-Id` 设为目标 Agent，并 `POST /api/console/chat`。
+5. 读取目标 Agent 的 SSE 输出，等最终消息后作为工具结果返回主 Agent。
+6. 后续追问若复用同一个 `session_id`，目标 Agent 可以继续之前的专家会话；不复用则是新会话。
+
+### 6.2 后台委派：`submit_to_agent` + `check_agent_task`
+
+复杂或耗时任务可以使用：
+
+- `submit_to_agent(to_agent, text)`：调用 `POST /api/console/chat/task`，立即返回 `task_id` 和 `session_id`；
+- `check_agent_task(task_id)`：调用 `GET /api/console/chat/task/<task_id>`，查询 `pending/running/finished/failed`；
+- 任务完成后取回专家最终文本。
+
+当前 LensGo 的主 Agent 提示词明确支持 `chat_with_agent`；是否采用后台模式由任务复杂度和主 Agent 决策，不是 Router 自动决定。
+
+### 6.3 临时子任务：`spawn_subagent`
+
+`spawn_subagent` 与 `chat_with_agent` 不同：
+
+- 它不是调用另一个命名 Agent；
+- 它在当前 Agent 的身份和工作区中创建一次性子任务；
+- 可选择继承上下文、建立隔离 worktree 或后台运行；
+- 结果回到当前 Agent，不能作为 LensGo 的固定专家角色。
+
+### 6.4 不是“全员互聊”
+
+当前提示词规定的方向是：
+
+```text
+lensgo-travel-director
+ ├─> lensgo-vision-curator
+ ├─> lensgo-memory-keeper
+ ├─> lensgo-media-archivist
+ └─> lensgo-pose-coach
+```
+
+专家的结果回到主 Agent；专家不会直接把内容发送给眼镜用户，也没有看到其他专家私有会话的机制。主 Agent 是最终裁决者和对外输出者。
+
+## 7. 共享记忆与私有记忆的区别
+
+### 7.1 Router 共享记忆
+
+当前共享数据库实际路径为：
+
+```text
+Qwen_competion/workspace/runtime/data/lensgo_memory.db
+```
+
+它保存用户范围的旅客记录、observation、媒体引用和审计所需的最小信息。每次入口请求先写 observation，再注入最近记录。这个数据库由 `glasses-server` 的 Router 层维护，不是一个独立 MCP Server。
+
+### 7.2 每个 Agent 的 ReMeLight 私有记忆
+
+每个 Workspace 都有自己的 ReMeLight 记忆目录、会话、历史和 `MEMORY.md`。因此：
+
+- 主 Agent 的长期经验不会自动成为视觉 Agent 的长期记忆；
+- 专家返回的文本只有在主 Agent 或专家自己写入相应 workspace 时才会持久化；
+- 共享上下文和私有记忆是两个层次，不能把 `LensGoContext` 理解成“所有 Agent 共用一个聊天历史”。
+
+媒体文件仍会在服务端临时目录保存，以便 QwenPaw 处理和 Telegram 镜像；是否长期保存由主 Agent + 媒体归档策略 + 用户确认共同决定，当前系统没有把所有收到的媒体自动变为永久记忆。
+
+## 8. 仓库里另有一套未接入当前 LensGo 主链路的 CloudPaw Agent
+
+源码目录：
+
+```text
+Qwen_competion/qwen_compitition/plugins/bundle/cloudpaw/
+```
+
+`cloudpaw/constants.py` 定义了以下 Agent，但当前 `GET /api/agents`、运行配置和 QwenPaw 日志都没有它们；因此它们是 CloudPaw 插件的备用/可选模板，不是当前 LensGo 的 7 个运行中 Agent。
+
+| Agent ID | 名称 | 职责 |
+|---|---|---|
+| `cloud-orchestrator` | CloudPaw-Master | 用户对话、需求澄清、生成 PRD、编排任务、汇总结果；可通过 ACP 调用外部 `iac-code` |
+| `cloud-executor` | CloudPaw-Executor | 代码编写、应用部署、环境配置、云资源 CLI、脚本和文件处理 |
+| `cloud-verifier` | CloudPaw-Verifier | 验证云资源、应用功能、访问性和安全合规；只产出结论，不修改资源 |
+| `iac-code` | 外部 ACP Agent | ROS/Terraform 模板、费用估算和资源栈管理；它是外部 ACP 进程，不是当前本地 profile |
+
+CloudPaw 还包含 `/a2a` 和 `a2a_call`，可根据工作区 `a2a_config.json` 调用远程 A2A Agent。当前目录中没有实际的 `a2a_config.json` 注册文件，因此不能把远程 A2A Agent 算进当前运行列表。
+
+## 9. 当前实现上的重要注意点
+
+1. **默认 Agent 与 LensGo 主 Agent 不同。** 全局 `config.json` 的 `active_agent` 是 `default`，但当前 `lensgo.integrated.toml` 设置 `agent_id = "lensgo-travel-director"`，且 glasses-server 在请求头中显式传 `X-Agent-Id`。所以眼镜请求走 Travel Director；不带该请求头的普通 QwenPaw 控制台请求可能走 `default`。
+2. **每个 Agent 是进程内 Workspace。** 看进程列表时不会看到 7 个 qwenpaw 进程；应从 `/api/agents`、`agent.json`、workspace 日志看 Agent 状态。
+3. **角色隔离主要靠独立 Workspace + 系统提示词。** 当前 LensGo 专家 `agent.json` 仍配置了不少通用内置工具；“只服务主 Agent、不能直接对用户输出”主要是角色提示词和调用约定，而不是完全由工具权限硬隔离。
+4. **Bridge 的 `agent.route` / `agent.collaboration` 是可观测事件。** Router 会发布“将咨询视觉/记忆专家”的内部事件供状态 Bot/Bridge 展示，但真正执行专家调用的是主 Agent 的 `chat_with_agent`，不要把 Bridge 事件误认为已经完成了 LLM 调用。
+5. **当前快照中专家工作区已经启动，但专家 `chats.json`/sessions 基本为空。** 这说明“专家可被调用”的运行配置已生效；不能仅凭启动日志断言最近每一类请求都实际调用过专家。
+6. **旧启动脚本与当前一体化配置存在端口差异。** 当前运行进程使用 `Qwen_competion/config/lensgo.integrated.toml`，眼镜 HTTP 端口为 `18000`；仓库中较早的 `lensgo-macao/run_all.sh`/旧说明仍出现 `18866` 和旧工作区路径。排查线上状态时以当前进程命令和 `config/lensgo.integrated.toml` 为准。
+
+## 10. 关键文件索引
+
+### 运行配置与 Agent 工作区
+
+```text
+Qwen_competion/config/lensgo.integrated.toml
+Qwen_competion/workspace/qwenpaw/config.json
+Qwen_competion/workspace/qwenpaw/workspaces/<agent-id>/agent.json
+Qwen_competion/workspace/qwenpaw/workspaces/<agent-id>/AGENTS.md
+Qwen_competion/workspace/qwenpaw/workspaces/<agent-id>/SOUL.md
+```
+
+### LensGo Router、共享记忆和设备接入
+
+```text
+Qwen_competion/lensgo-macao/ai_glasses_debug/glasses/server/ws_handler.py
+Qwen_competion/lensgo-macao/ai_glasses_debug/glasses/server/http_routes.py
+Qwen_competion/lensgo-macao/ai_glasses_debug/glasses/server/telegram_agent.py
+Qwen_competion/lensgo-macao/ai_glasses_debug/glasses/server/lensgo_memory.py
+Qwen_competion/lensgo-macao/ai_glasses_debug/glasses/qwenpaw/sse.py
+Qwen_competion/lensgo-macao/ai_glasses_debug/glasses/server/qwenpaw_bridge.py
+```
+
+### QwenPaw 多 Agent 核心
+
+```text
+Qwen_competion/qwen_compitition/src/qwenpaw/app/multi_agent_manager.py
+Qwen_competion/qwen_compitition/src/qwenpaw/app/workspace/workspace.py
+Qwen_competion/qwen_compitition/src/qwenpaw/app/agent_context.py
+Qwen_competion/qwen_compitition/src/qwenpaw/app/routers/agents.py
+Qwen_competion/qwen_compitition/src/qwenpaw/agents/tools/agent_management.py
+Qwen_competion/workspace/qwenpaw/skill_pool/multi_agent_collaboration/SKILL.md
+```
+
+### LensGo 的总体设计文档
+
+```text
+Qwen_competion/lensgo-macao/LensGo_多Agent旅行记忆架构.md
+Qwen_competion/lensgo-macao/LensGo_眼镜接入与Bridge使用说明.md
+```

@@ -1,0 +1,59 @@
+## LensGo 一体化运行配置
+#
+# 此文件保留原模块全部功能开关和提示词，仅把媒体目录收敛到外层统一 workspace。
+
+[server]
+host = "127.0.0.1"
+port = 18765
+http_host = "127.0.0.1"
+http_port = 18000
+http_max_mb = 50
+media_dir = "../workspace/runtime/lensgo-media"
+verbose_log = false
+
+[server.intent]
+demo = false
+intent_keywords = "识物|看看|这是啥|这是什么|面前|物体|拍照"
+finish_keywords = "退出|退下吧|退下|再见了|拜拜|没事了|不说了|你先退(?:下)?|结束(?:会话|对话)|算了"
+
+[server.token]
+mode = "allow_any" # allow_any | allowlist | regex
+allowlist = []
+regex = ""
+
+[qwenpaw]
+base_url = "http://127.0.0.1:18088"
+agent_id = "lensgo-travel-director"
+timeout_s = 300
+video_prompt = "把这段视频当作旅途中正在发生的一刻来理解。必要时请调用视觉策展、记忆守护或媒体归档专家；最后只给用户简短、温暖、适合眼镜朗读的回应。"
+image_prompt = "把这张图片当作用户眼前的旅行场景来理解。必要时请调用视觉策展、记忆守护或媒体归档专家；最后只给用户地点故事、拍照建议或此刻值得留意的内容，避免技术性语句。"
+
+[qwenpaw.auth]
+enabled = false
+token = ""
+username = ""
+password = ""
+expires_in_s = 0
+
+[bridge]
+enabled = true
+history_size = 200
+token_env = "GLASSES_BRIDGE_TOKEN"
+
+[telegram]
+enabled = true
+interactive = true
+bot_token_env = "TELEGRAM_BOT_TOKEN"
+chat_id_env = "TELEGRAM_CHAT_ID"
+
+[telegram.status]
+enabled = true
+bot_token_env = "TELEGRAM_STATUS_BOT_TOKEN"
+chat_id_env = "TELEGRAM_STATUS_CHAT_ID"
+
+[client]
+ws_url = "ws://127.0.0.1:18765/chat"
+http_upload_url = "http://127.0.0.1:18000/api/chat/resources/upload"
+access_token = ""
+device_id = "2C:BE:EB:54:45:41"
+verbose_log = false

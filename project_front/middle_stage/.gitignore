@@ -1,0 +1,36 @@
+# Dependencies and build products
+**/node_modules/
+**/dist/
+**/dist-*/
+**/.next/
+**/target/
+**/.gradle/
+**/.kotlin/
+**/.tauri/
+**/src-tauri/gen/android/build/
+**/src-tauri/gen/android/app/build/
+**/src-tauri/gen/android/buildSrc/build/
+
+# Local and secret configuration
+**/.env
+**/.env.*
+**/.dev.vars
+**/.dev.vars.*
+**/local.properties
+**/key.properties
+**/keystore.properties
+*.jks
+*.keystore
+
+# Logs, caches and runtime data
+**/*.log
+**/.pytest_cache/
+**/__pycache__/
+**/.wrangler/
+**/.vinext/
+**/*.db
+**/*.sqlite*
+
+# Local QA artifacts
+**/.playwright-cli/
+**/coverage/

@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>部门登录 · 人流密度数据发布器</title>
+<link rel="stylesheet" href="/styles.css?v=20260819-auth">
+</head>
+<body class="login-page">
+  <main class="login-shell">
+    <div class="login-brand">
+      <div class="login-mark" aria-hidden="true">流</div>
+      <div>
+        <h1>人流密度数据发布器</h1>
+      </div>
+    </div>
+
+    <section class="card login-card">
+      <h2>登录</h2>
+      <p>请使用管理员分配的部门账号。</p>
+      <form id="loginForm" class="login-form">
+        <label class="field">
+          用户名
+          <input id="username" name="username" type="text" autocomplete="username" required autofocus>
+        </label>
+        <label class="field">
+          密码
+          <input id="password" name="password" type="password" autocomplete="current-password" required>
+        </label>
+        <p class="form-error" id="loginError" role="alert" hidden></p>
+        <button class="btn primary" id="loginBtn" type="submit">登录发布平台</button>
+      </form>
+    </section>
+    <p class="login-footnote">未获授权的人员不得访问或使用本系统。</p>
+  </main>
+  <script src="/login.js?v=20260819-auth"></script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.mobile.tsbuildinfo"
+  },
+  "include": [
+    "src/vite-env.d.ts",
+    "src/mobileMain.tsx",
+    "src/mobile-local/**/*.ts",
+    "src/mobile-local/**/*.tsx"
+  ]
+}

@@ -1,0 +1,16 @@
+# 运行时数据库与日志
+data/
+*.db
+*.db-wal
+*.db-shm
+*.log
+
+# 令牌与本机配置
+.env
+.env.*
+!.env.example
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+.venv/

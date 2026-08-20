@@ -1,0 +1,199 @@
+.page {
+  min-height: 100%;
+  padding: 22px;
+  background:
+    radial-gradient(circle at 8% 0%, rgba(255, 127, 22, 0.1), transparent 30%),
+    radial-gradient(circle at 100% 12%, rgba(22, 119, 255, 0.08), transparent 28%),
+    #f7f8fa;
+  overflow-y: auto;
+}
+
+.hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.heroIcon {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 15px;
+  color: #fff;
+  background: linear-gradient(145deg, #ff9a45, #ff6a00);
+  box-shadow: 0 9px 24px rgba(255, 106, 0, 0.24);
+}
+
+.title {
+  margin: 0 !important;
+  font-size: 26px !important;
+}
+
+.subtitle {
+  color: rgba(0, 0, 0, 0.52);
+}
+
+.alert {
+  margin-bottom: 14px;
+  border-radius: 12px;
+}
+
+.metricCard,
+.panel {
+  border: 1px solid rgba(30, 40, 70, 0.07);
+  border-radius: 16px;
+  box-shadow: 0 8px 30px rgba(43, 54, 82, 0.05);
+}
+
+.metricCard :global(.qwenpaw-card-body) {
+  padding: 17px;
+}
+
+.serviceRow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 14px 2px 2px;
+}
+
+.serviceRow :global(.qwenpaw-tag) {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border-radius: 999px;
+}
+
+.mainGrid {
+  margin-top: 12px;
+}
+
+.panel {
+  margin-bottom: 16px;
+}
+
+.media {
+  width: 100%;
+  max-height: 430px;
+  object-fit: contain;
+  border-radius: 12px;
+  background: #f2f3f5;
+}
+
+.quickPanel :global(.qwenpaw-card-body) {
+  padding-top: 4px;
+}
+
+.quickGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.quickGrid button {
+  height: 50px;
+}
+
+.eventsPanel :global(.qwenpaw-card-body) {
+  padding: 0 18px;
+  max-height: 610px;
+  overflow-y: auto;
+}
+
+.eventItem {
+  display: flex !important;
+  align-items: center !important;
+  gap: 11px;
+  padding: 12px 0 !important;
+}
+
+.eventIcon {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  color: #1677ff;
+  background: rgba(22, 119, 255, 0.09);
+}
+
+.eventIcon[data-direction="upstream"] {
+  color: #0f9f6e;
+  background: rgba(15, 159, 110, 0.1);
+}
+
+.eventBody {
+  min-width: 0;
+  flex: 1;
+}
+
+.eventTop {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.eventTime,
+.eventMeta {
+  font-size: 12px;
+}
+
+.eventMeta {
+  margin-top: 3px;
+  color: rgba(0, 0, 0, 0.36);
+}
+
+@media (max-width: 768px) {
+  .page {
+    padding: 14px 12px calc(82px + env(safe-area-inset-bottom));
+  }
+
+  .hero {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .title {
+    font-size: 21px !important;
+  }
+
+  .subtitle {
+    display: block;
+    max-width: 260px;
+    font-size: 12px;
+  }
+
+  .metricCard :global(.qwenpaw-card-body) {
+    padding: 13px;
+  }
+
+  .quickGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .eventsPanel :global(.qwenpaw-card-body) {
+    max-height: none;
+    padding: 0 12px;
+  }
+}
+
+:global(.dark-mode) {
+  .page {
+    background: #111315;
+  }
+
+  .metricCard,
+  .panel {
+    background: #1a1d21;
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+
+  .subtitle,
+  .eventMeta {
+    color: rgba(255, 255, 255, 0.48);
+  }
+}

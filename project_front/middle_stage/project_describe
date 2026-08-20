@@ -1,0 +1,37 @@
+# middle_stage 前端项目说明
+
+> 整理日期：2026-08-19
+> 来源：`Z:\qwen_compitition\final_work\project_backend\middle_stage`
+
+## 1. 目录结构
+
+本目录按后端 `middle_stage` 的三个核心项目保持同名组织：
+
+```text
+middle_stage/
+├─ Qwen_competion/   LensGo/QwenPaw Web 控制台、手机本地版及 Tauri/Android 外壳
+├─ hotel_book/       酒店、预订与账单可视化前端
+├─ data_publish/     澳门人流数据发布器静态前端
+└─ project_describe  本说明
+```
+
+## 2. 前后端对应关系
+
+| 前端目录 | 原始前端来源 | 依赖的后端 |
+|---|---|---|
+| `Qwen_competion` | `Qwen_competion/qwen_compitition/console` | QwenPaw `18088`、LensGo Bridge `18000/18765`、人流服务 `18099` |
+| `hotel_book` | `hotel_book/app` 的 UI、静态资源和前端构建配置 | 同源 `/api/v1/*`，本地后端默认 `18110` |
+| `data_publish` | `data_publish/web` | 同源 `/api/*`，本地后端默认 `18099` |
+
+## 3. 整理原则
+
+- 保留前端源码、样式、静态资源、测试、包管理锁文件和必要构建配置。
+- Qwen/LensGo 保留 Tauri Rust 源码、权限配置和 Android 产品级源码，确保手机本地版可以继续维护。
+- 不复制 `node_modules`、`dist`、`.next`、`target`、Gradle 构建缓存、原生编译产物和运行日志。
+- 不复制 `.env*`、`.dev.vars*`、Token、地图 Key、数据库和服务端数据。
+- 不复制 `hotel_book/app/api`、酒店数据层和 `data_publish` Python 后端；需要联调时启动对应的 `project_backend/middle_stage` 服务。
+- 不复制历史 `.bak`、恢复目录或部署压缩包。
+
+## 4. 使用入口
+
+每个项目目录内都有独立 `README.md`，说明其来源、保留范围、构建方式和后端依赖。

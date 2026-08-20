@@ -1,0 +1,36 @@
+name: ai-drive
+protocol: mcp
+endpoint:
+  transport: stdio
+  command: /home/jimmyhu/Desktop/qwen_compitition/qwenpaw-local-latest/.venv/bin/python
+  args:
+  - /home/jimmyhu/Desktop/ai-drive-mcp/server.py
+  env:
+    AI_DRIVE_BASE_URL:
+      source: credential
+      credential: static
+      field: AI_DRIVE_BASE_URL
+    AI_DRIVE_TIMEOUT_SECONDS:
+      source: credential
+      credential: static
+      field: AI_DRIVE_TIMEOUT_SECONDS
+    QWENPAW_MEDIA_ROOT:
+      source: literal
+      value: /home/jimmyhu/Desktop/qwen_compitition/qwenpaw-local-latest/working/workspaces/default/media
+credentials:
+  static:
+    kind: static
+    ref: mcp/ai-drive
+config:
+  display_name: ai-drive
+  description: ''
+  tools: null
+enabled: true
+policy:
+  default_effect: ask
+  rules:
+  - subject: '*'
+    effect: allow
+    target:
+      kind: tool
+      name: ai_drive_store_from_qwenpaw
