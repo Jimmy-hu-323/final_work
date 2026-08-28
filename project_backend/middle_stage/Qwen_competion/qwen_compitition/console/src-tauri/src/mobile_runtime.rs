@@ -93,6 +93,7 @@ pub struct ChatMessage {
 #[serde(rename_all = "camelCase")]
 pub struct ChatRequest {
     messages: Vec<ChatMessage>,
+    model: Option<String>,
     temperature: Option<f64>,
     max_tokens: Option<u64>,
 }
@@ -127,6 +128,9 @@ pub struct HotelGatewayRequest {
     bill_ids: Option<Vec<String>>,
     authorization_id: Option<String>,
     action: Option<String>,
+    trip_id: Option<String>,
+    expense_id: Option<String>,
+    expense: Option<Value>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -413,13 +417,19 @@ fn extract_message_content(value: &Value) -> Option<String> {
 async fn perform_chat(
     settings: &StoredSettings,
     mut messages: Vec<ChatMessage>,
+    requested_model: Option<String>,
     temperature: Option<f64>,
     max_tokens: Option<u64>,
 ) -> Result<ChatResponse, String> {
     if settings.api_key.trim().is_empty() {
         return Err("请先在“设置”中填写模型 API Key".to_string());
     }
-    if settings.model.trim().is_empty() {
+    let model = requested_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| settings.model.trim());
+    if model.is_empty() {
         return Err("请先在“设置”中填写模型名称".to_string());
     }
     let endpoint = normalize_endpoint(&settings.api_base_url, "/chat/completions")?;
@@ -435,7 +445,7 @@ async fn perform_chat(
         );
     }
     let mut body = json!({
-        "model": settings.model,
+        "model": model,
         "messages": messages,
         "stream": false,
         "temperature": temperature.unwrap_or(0.6)
@@ -464,7 +474,7 @@ async fn perform_chat(
         model: value
             .get("model")
             .and_then(Value::as_str)
-            .unwrap_or(&settings.model)
+            .unwrap_or(model)
             .to_string(),
         usage: value.get("usage").cloned(),
     })
@@ -602,6 +612,7 @@ pub async fn mobile_test_provider(app: AppHandle) -> Result<ChatResponse, String
             role: "user".to_string(),
             content: "请只回复：LensGo 连接成功".to_string(),
         }],
+        None,
         Some(0.0),
         Some(32),
     )
@@ -614,10 +625,59 @@ pub async fn mobile_chat(app: AppHandle, request: ChatRequest) -> Result<ChatRes
     perform_chat(
         &settings,
         request.messages,
+        request.model,
         request.temperature,
         request.max_tokens,
     )
     .await
+}
+
+#[tauri::command]
+pub async fn mobile_list_models(app: AppHandle) -> Result<Vec<String>, String> {
+    let settings = load_stored_settings(&app)?;
+    if settings.api_key.trim().is_empty() {
+        return Err("请先在“设置”中填写模型 API Key".to_string());
+    }
+    let endpoint = normalize_endpoint(&settings.api_base_url, "/models")?;
+    let response = reqwest::Client::new()
+        .get(endpoint)
+        .bearer_auth(settings.api_key.trim())
+        .send()
+        .await
+        .map_err(|error| format!("无法读取模型列表：{error}"))?;
+    if !response.status().is_success() {
+        return Err(parse_error(response).await);
+    }
+    let value: Value = response
+        .json()
+        .await
+        .map_err(|error| format!("模型列表不是有效 JSON：{error}"))?;
+    let candidates = value
+        .get("data")
+        .or_else(|| value.get("models"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut models = Vec::new();
+    for candidate in candidates {
+        let id = candidate
+            .get("id")
+            .or_else(|| candidate.get("name"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim();
+        if !id.is_empty() && !models.iter().any(|item| item == id) {
+            models.push(id.to_string());
+        }
+        if models.len() >= 100 {
+            break;
+        }
+    }
+    let configured = settings.model.trim();
+    if !configured.is_empty() && !models.iter().any(|item| item == configured) {
+        models.insert(0, configured.to_string());
+    }
+    Ok(models)
 }
 
 #[tauri::command]
@@ -783,6 +843,8 @@ pub async fn mobile_hotel_gateway(
     }
 
     let bill_id = request.bill_id.as_deref().unwrap_or("");
+    let trip_id = request.trip_id.as_deref().unwrap_or("");
+    let expense_id = request.expense_id.as_deref().unwrap_or("");
     let (method, path, body) = match request.operation.as_str() {
         "list_bills" | "list_authorizations" => (
             reqwest::Method::GET,
@@ -831,7 +893,40 @@ pub async fn mobile_hotel_gateway(
                 Some(json!({"bill_ids": bill_ids})),
             )
         }
-        _ => return Err("不支持的酒店账单操作".to_string()),
+        "list_trip_expenses" if safe_id(trip_id) => (
+            reqwest::Method::GET,
+            format!("/api/travel-planner/trip-expenses?trip_id={trip_id}"),
+            None,
+        ),
+        "create_trip_expense" if safe_id(trip_id) => {
+            let mut payload = request.expense.unwrap_or_else(|| json!({}));
+            let Some(object) = payload.as_object_mut() else {
+                return Err("费用内容格式无效".to_string());
+            };
+            object.insert("trip_id".to_string(), json!(trip_id));
+            (
+                reqwest::Method::POST,
+                "/api/travel-planner/trip-expenses".to_string(),
+                Some(payload),
+            )
+        }
+        "update_trip_expense" if safe_id(expense_id) => {
+            let payload = request.expense.unwrap_or_else(|| json!({}));
+            if !payload.is_object() {
+                return Err("费用内容格式无效".to_string());
+            }
+            (
+                reqwest::Method::PATCH,
+                format!("/api/travel-planner/trip-expenses/{expense_id}"),
+                Some(payload),
+            )
+        }
+        "delete_trip_expense" if safe_id(expense_id) => (
+            reqwest::Method::DELETE,
+            format!("/api/travel-planner/trip-expenses/{expense_id}"),
+            None,
+        ),
+        _ => return Err("不支持的账单操作".to_string()),
     };
 
     let endpoint = qwenpaw_endpoint(&settings, &path)?;
@@ -843,14 +938,14 @@ pub async fn mobile_hotel_gateway(
     let response = builder
         .send()
         .await
-        .map_err(|error| format!("无法连接酒店账单网关：{error}"))?;
+        .map_err(|error| format!("无法连接账单网关：{error}"))?;
     if !response.status().is_success() {
         return Err(parse_error(response).await);
     }
     response
         .json::<Value>()
         .await
-        .map_err(|error| format!("酒店账单网关返回格式无效：{error}"))
+        .map_err(|error| format!("账单网关返回格式无效：{error}"))
 }
 
 #[tauri::command]

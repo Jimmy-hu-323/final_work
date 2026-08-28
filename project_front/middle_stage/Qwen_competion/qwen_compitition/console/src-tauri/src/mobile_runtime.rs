@@ -93,6 +93,7 @@ pub struct ChatMessage {
 #[serde(rename_all = "camelCase")]
 pub struct ChatRequest {
     messages: Vec<ChatMessage>,
+    model: Option<String>,
     temperature: Option<f64>,
     max_tokens: Option<u64>,
 }
@@ -413,13 +414,19 @@ fn extract_message_content(value: &Value) -> Option<String> {
 async fn perform_chat(
     settings: &StoredSettings,
     mut messages: Vec<ChatMessage>,
+    requested_model: Option<String>,
     temperature: Option<f64>,
     max_tokens: Option<u64>,
 ) -> Result<ChatResponse, String> {
     if settings.api_key.trim().is_empty() {
         return Err("请先在“设置”中填写模型 API Key".to_string());
     }
-    if settings.model.trim().is_empty() {
+    let model = requested_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| settings.model.trim());
+    if model.is_empty() {
         return Err("请先在“设置”中填写模型名称".to_string());
     }
     let endpoint = normalize_endpoint(&settings.api_base_url, "/chat/completions")?;
@@ -435,7 +442,7 @@ async fn perform_chat(
         );
     }
     let mut body = json!({
-        "model": settings.model,
+        "model": model,
         "messages": messages,
         "stream": false,
         "temperature": temperature.unwrap_or(0.6)
@@ -464,7 +471,7 @@ async fn perform_chat(
         model: value
             .get("model")
             .and_then(Value::as_str)
-            .unwrap_or(&settings.model)
+            .unwrap_or(model)
             .to_string(),
         usage: value.get("usage").cloned(),
     })
@@ -602,6 +609,7 @@ pub async fn mobile_test_provider(app: AppHandle) -> Result<ChatResponse, String
             role: "user".to_string(),
             content: "请只回复：LensGo 连接成功".to_string(),
         }],
+        None,
         Some(0.0),
         Some(32),
     )
@@ -614,10 +622,59 @@ pub async fn mobile_chat(app: AppHandle, request: ChatRequest) -> Result<ChatRes
     perform_chat(
         &settings,
         request.messages,
+        request.model,
         request.temperature,
         request.max_tokens,
     )
     .await
+}
+
+#[tauri::command]
+pub async fn mobile_list_models(app: AppHandle) -> Result<Vec<String>, String> {
+    let settings = load_stored_settings(&app)?;
+    if settings.api_key.trim().is_empty() {
+        return Err("请先在“设置”中填写模型 API Key".to_string());
+    }
+    let endpoint = normalize_endpoint(&settings.api_base_url, "/models")?;
+    let response = reqwest::Client::new()
+        .get(endpoint)
+        .bearer_auth(settings.api_key.trim())
+        .send()
+        .await
+        .map_err(|error| format!("无法读取模型列表：{error}"))?;
+    if !response.status().is_success() {
+        return Err(parse_error(response).await);
+    }
+    let value: Value = response
+        .json()
+        .await
+        .map_err(|error| format!("模型列表不是有效 JSON：{error}"))?;
+    let candidates = value
+        .get("data")
+        .or_else(|| value.get("models"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut models = Vec::new();
+    for candidate in candidates {
+        let id = candidate
+            .get("id")
+            .or_else(|| candidate.get("name"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim();
+        if !id.is_empty() && !models.iter().any(|item| item == id) {
+            models.push(id.to_string());
+        }
+        if models.len() >= 100 {
+            break;
+        }
+    }
+    let configured = settings.model.trim();
+    if !configured.is_empty() && !models.iter().any(|item| item == configured) {
+        models.insert(0, configured.to_string());
+    }
+    Ok(models)
 }
 
 #[tauri::command]

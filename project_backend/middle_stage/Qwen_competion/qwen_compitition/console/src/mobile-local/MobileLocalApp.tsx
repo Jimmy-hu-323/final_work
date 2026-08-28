@@ -5,6 +5,7 @@ import {
   Button,
   Card,
   ConfigProvider,
+  Drawer,
   Empty,
   Form,
   Input,
@@ -21,24 +22,26 @@ import {
   message,
 } from "antd";
 import {
+  ArrowRight,
   BellRing,
   Bot,
   Camera,
   CheckCircle2,
-  ChevronDown,
-  ChevronUp,
   CircleUserRound,
   Cloud,
   CloudOff,
   CloudUpload,
+  EllipsisVertical,
   Glasses,
   Image as ImageIcon,
   Images,
   KeyRound,
+  History,
   LocateFixed,
   Map as MapIcon,
   MapPinned,
   MessageCircle,
+  MessageSquarePlus,
   Navigation,
   Play,
   RefreshCw,
@@ -70,7 +73,6 @@ import {
 import {
   albumSearchDocument,
   analyzeAlbumImage,
-  clearMessages,
   createId,
   deleteAlbumItem,
   deleteCloudAlbumItem,
@@ -79,6 +81,7 @@ import {
   fileToDataUrl,
   generateMobileImage,
   listAlbumItems,
+  listMobileModels,
   loadMemory,
   loadMessages,
   loadMobileSettings,
@@ -134,6 +137,7 @@ import {
   extractAgentTripProposal,
   proposalFromRemoteItinerary,
   remoteItinerarySignature,
+  stripAgentControlContent,
 } from "./tripSync";
 import styles from "./mobileLocal.module.less";
 
@@ -736,6 +740,100 @@ function LocalSettingsPage({
   );
 }
 
+const CHAT_SESSIONS_KEY = "lensgo_mobile_chat_sessions_v1";
+const ACTIVE_CHAT_SESSION_KEY = "lensgo_mobile_active_chat_session_v1";
+const QWENPAW_MODEL_ID = "__lensgo_qwenpaw__";
+
+type LocalChatSession = {
+  id: string;
+  title: string;
+  messages: LocalMessage[];
+  model: string;
+  remoteSessionId: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+function cleanChatMessages(messages: LocalMessage[]): LocalMessage[] {
+  return messages
+    .map((item) =>
+      item.role === "assistant"
+        ? { ...item, content: stripAgentControlContent(item.content) }
+        : item,
+    )
+    .filter(
+      (item) =>
+        item.role === "user" ||
+        Boolean(item.content.trim()) ||
+        Boolean(item.albumItemIds?.length),
+    );
+}
+
+function createChatRemoteSessionId(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `lensgo-chat-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function createChatSession(
+  model: string,
+  messages: LocalMessage[] = [],
+): LocalChatSession {
+  const now = Date.now();
+  const cleanMessages = cleanChatMessages(messages);
+  const firstQuestion = cleanMessages.find(
+    (item) => item.role === "user",
+  )?.content;
+  return {
+    id: createId("chat"),
+    title: firstQuestion?.trim().slice(0, 24) || "新对话",
+    messages: cleanMessages,
+    model,
+    remoteSessionId: cleanMessages.length
+      ? loadQwenPawSessionId()
+      : createChatRemoteSessionId(),
+    createdAt: cleanMessages[0]?.createdAt || now,
+    updatedAt: cleanMessages[cleanMessages.length - 1]?.createdAt || now,
+  };
+}
+
+function loadChatSessionState(defaultModel: string): {
+  sessions: LocalChatSession[];
+  activeId: string;
+} {
+  try {
+    const raw = JSON.parse(
+      localStorage.getItem(CHAT_SESSIONS_KEY) || "[]",
+    ) as LocalChatSession[];
+    const sessions = Array.isArray(raw)
+      ? raw
+          .filter(
+            (item) =>
+              item &&
+              typeof item.id === "string" &&
+              Array.isArray(item.messages),
+          )
+          .map((item) => ({
+            ...item,
+            messages: cleanChatMessages(item.messages),
+          }))
+      : [];
+    if (sessions.length) {
+      const activeId = localStorage.getItem(ACTIVE_CHAT_SESSION_KEY) || "";
+      return {
+        sessions,
+        activeId: sessions.some((item) => item.id === activeId)
+          ? activeId
+          : sessions[0].id,
+      };
+    }
+  } catch {
+    // Invalid local history falls back to the legacy current conversation.
+  }
+  const session = createChatSession(defaultModel, loadMessages());
+  return { sessions: [session], activeId: session.id };
+}
+
 function LocalChatPage({
   settings,
   fallbackConfigured,
@@ -744,24 +842,98 @@ function LocalChatPage({
   fallbackConfigured: boolean;
 }) {
   const navigate = useNavigate();
-  const [messages, setMessages] = useState<LocalMessage[]>(loadMessages);
+  const qwenpawConfigured = Boolean(
+    settings?.qwenpawBaseUrl && settings?.qwenpawAgentId,
+  );
+  const defaultModel = qwenpawConfigured
+    ? QWENPAW_MODEL_ID
+    : settings?.model || "";
+  const [initialChatState] = useState(() =>
+    loadChatSessionState(defaultModel),
+  );
+  const [sessions, setSessions] = useState<LocalChatSession[]>(
+    initialChatState.sessions,
+  );
+  const [activeSessionId, setActiveSessionId] = useState(
+    initialChatState.activeId,
+  );
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [agentActivity, setAgentActivity] = useState("");
   const [albumItems, setAlbumItems] = useState<AlbumItem[]>([]);
+  const [apiModels, setApiModels] = useState<string[]>(
+    settings?.model ? [settings.model] : [],
+  );
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
-  const qwenpawConfigured = Boolean(
-    settings?.qwenpawBaseUrl && settings?.qwenpawAgentId,
+  const activeSession =
+    sessions.find((session) => session.id === activeSessionId) || sessions[0];
+  const messages = activeSession?.messages || [];
+  const selectedModel = activeSession?.model || defaultModel;
+  const qwenpawSelected = selectedModel === QWENPAW_MODEL_ID;
+  const modelOptions = useMemo(
+    () => [
+      ...(qwenpawConfigured
+        ? [{ value: QWENPAW_MODEL_ID, label: "QwenPaw 主智能体" }]
+        : []),
+      ...apiModels.map((model) => ({ value: model, label: model })),
+    ],
+    [apiModels, qwenpawConfigured],
   );
   const albumById = useMemo(
     () => new Map(albumItems.map((item) => [item.id, item])),
     [albumItems],
   );
 
+  const setMessages = (
+    update:
+      | LocalMessage[]
+      | ((current: LocalMessage[]) => LocalMessage[]),
+  ) => {
+    setSessions((current) =>
+      current.map((session) => {
+        if (session.id !== activeSessionId) return session;
+        const nextMessages =
+          typeof update === "function" ? update(session.messages) : update;
+        const firstQuestion = nextMessages.find(
+          (item) => item.role === "user",
+        )?.content;
+        return {
+          ...session,
+          title:
+            session.title === "新对话" && firstQuestion
+              ? firstQuestion.trim().slice(0, 24)
+              : session.title,
+          messages: nextMessages,
+          updatedAt: Date.now(),
+        };
+      }),
+    );
+  };
+
   useEffect(() => {
+    localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(sessions.slice(0, 50)));
+    localStorage.setItem(ACTIVE_CHAT_SESSION_KEY, activeSessionId);
     saveMessages(messages);
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [activeSessionId, messages, sessions]);
+
+  useEffect(() => {
+    if (!settings?.hasApiKey || !settings.apiBaseUrl) return;
+    setModelsLoading(true);
+    void listMobileModels()
+      .then((models) => {
+        const next = Array.from(
+          new Set([settings.model, ...models].filter(Boolean)),
+        );
+        setApiModels(next);
+      })
+      .catch(() => {
+        setApiModels(settings.model ? [settings.model] : []);
+      })
+      .finally(() => setModelsLoading(false));
+  }, [settings?.apiBaseUrl, settings?.hasApiKey, settings?.model]);
 
   useEffect(() => {
     void listAlbumItems().then(setAlbumItems);
@@ -770,8 +942,10 @@ function LocalChatPage({
   const send = async (preset?: string) => {
     const text = (preset ?? input).trim();
     if (!text || sending) return;
-    if (!qwenpawConfigured && !fallbackConfigured) {
-      message.warning("请先配置 QwenPaw 服务");
+    if (qwenpawSelected ? !qwenpawConfigured : !fallbackConfigured) {
+      message.warning(
+        qwenpawSelected ? "请先配置 QwenPaw 服务" : "请先配置模型 API",
+      );
       navigate("/local/settings");
       return;
     }
@@ -785,12 +959,16 @@ function LocalChatPage({
     setMessages(next);
     setInput("");
     setSending(true);
-    setAgentActivity("正在连接 QwenPaw 主 Agent…");
+    setAgentActivity(
+      qwenpawSelected
+        ? "正在连接 QwenPaw 主智能体…"
+        : `正在连接 ${selectedModel}…`,
+    );
     try {
       // The legacy direct-model fallback may search the on-device album.
       // QwenPaw mode deliberately skips this branch: local-only photos must
       // remain invisible to the main agent until the user uploads them.
-      if (!qwenpawConfigured && PHOTO_SEARCH_PATTERN.test(text)) {
+      if (!qwenpawSelected && PHOTO_SEARCH_PATTERN.test(text)) {
         const currentAlbum = await listAlbumItems();
         setAlbumItems(currentAlbum);
         if (!currentAlbum.length) {
@@ -834,7 +1012,7 @@ function LocalChatPage({
         return;
       }
       const memory = loadMemory().trim();
-      if (qwenpawConfigured) {
+      if (qwenpawSelected) {
         const serverTripBefore = await fetchQwenPawLatestItinerary().catch(
           () => null,
         );
@@ -897,7 +1075,8 @@ function LocalChatPage({
         const finalContent = await streamQwenPawChat(
           {
             text,
-            sessionId: loadQwenPawSessionId(),
+            sessionId:
+              activeSession?.remoteSessionId || createChatRemoteSessionId(),
             userId: mobileDeviceId(),
             deviceId: mobileDeviceId(),
             context,
@@ -906,7 +1085,12 @@ function LocalChatPage({
             onText: (content) =>
               setMessages((current) =>
                 current.map((item) =>
-                  item.id === assistantId ? { ...item, content } : item,
+                  item.id === assistantId
+                    ? {
+                        ...item,
+                        content: stripAgentControlContent(content),
+                      }
+                    : item,
                 ),
               ),
             onActivity: (activity) => setAgentActivity(activity.label),
@@ -925,6 +1109,21 @@ function LocalChatPage({
             proposal = proposalFromRemoteItinerary(serverTripAfter);
           }
         }
+        const visibleContent = stripAgentControlContent(finalContent);
+        setMessages((current) =>
+          current.map((item) =>
+            item.id === assistantId
+              ? {
+                  ...item,
+                  content:
+                    visibleContent ||
+                    (proposal
+                      ? "行程方案已生成，请确认是否保存到“旅程”。"
+                      : "处理已完成。"),
+                }
+              : item,
+          ),
+        );
         if (proposal) {
           const currentTrips = loadTrips();
           const target = currentTrips.find(
@@ -993,13 +1192,16 @@ function LocalChatPage({
             : []),
           ...next.slice(-20).map(({ role, content }) => ({ role, content })),
         ];
-        const response = await mobileChat(requestMessages);
+        const response = await mobileChat(requestMessages, {
+          model: selectedModel,
+        });
         setMessages((current) => [
           ...current,
           {
             id: createId("message"),
             role: "assistant",
-            content: response.content,
+            content:
+              stripAgentControlContent(response.content) || "处理已完成。",
             createdAt: Date.now(),
           },
         ]);
@@ -1012,107 +1214,182 @@ function LocalChatPage({
     }
   };
 
-  const reset = () => {
-    Modal.confirm({
-      title: "清空本地对话？",
-      content: "只会清除这台手机上的对话，不会删除旅行记忆和相册。",
-      okText: "清空",
-      okButtonProps: { danger: true },
-      cancelText: "取消",
-      onOk: () => {
-        clearMessages();
-        setMessages([]);
-      },
-    });
+  const newChat = () => {
+    const session = createChatSession(selectedModel || defaultModel);
+    setSessions((current) => [session, ...current].slice(0, 50));
+    setActiveSessionId(session.id);
+    setInput("");
+    setHistoryOpen(false);
+  };
+
+  const selectChat = (sessionId: string) => {
+    setActiveSessionId(sessionId);
+    setInput("");
+    setHistoryOpen(false);
+  };
+
+  const deleteChat = (sessionId: string) => {
+    const remaining = sessions.filter((session) => session.id !== sessionId);
+    if (remaining.length) {
+      setSessions(remaining);
+      if (sessionId === activeSessionId) {
+        setActiveSessionId(remaining[0].id);
+      }
+      return;
+    }
+    const replacement = createChatSession(defaultModel);
+    setSessions([replacement]);
+    setActiveSessionId(replacement.id);
+  };
+
+  const selectModel = (model: string) => {
+    setSessions((current) =>
+      current.map((session) =>
+        session.id === activeSessionId
+          ? { ...session, model, updatedAt: Date.now() }
+          : session,
+      ),
+    );
   };
 
   return (
-    <section className={`${styles.page} ${styles.chatPage}`}>
-      <AppHeader
-        title="LensGo 对话"
-        subtitle="QwenPaw 主 Agent · 子 Agent · Skills · MCP"
-        action={
-          <Button type="text" icon={<Trash2 size={17} />} onClick={reset} />
-        }
-      />
-      {!qwenpawConfigured && (
-        <Alert
-          showIcon
-          type="warning"
-          message={
-            fallbackConfigured
-              ? "QwenPaw 尚未配置，将使用基础模型回退"
-              : "尚未配置 QwenPaw"
-          }
-          action={
-            <Button size="small" onClick={() => navigate("/local/settings")}>
-              去设置
-            </Button>
-          }
-        />
-      )}
-      {qwenpawConfigured && !loadPrivacySettings().shareTripsWithAgent && (
-        <Alert
-          showIcon
-          type="info"
-          message="主 Agent 当前看不到本地旅程"
-          description="如需在对话中查询或调整“旅程”，请在设置里开启“允许主 Agent 使用本地旅程”。"
-        />
-      )}
-      <div className={styles.quickPrompts}>
-        {[
-          "澳门一日游怎么安排？",
-          "大三巴怎么拍照好看？",
-          "推荐适合步行的澳门路线",
-        ].map((prompt) => (
-          <button type="button" key={prompt} onClick={() => void send(prompt)}>
-            {prompt}
-          </button>
-        ))}
-      </div>
-      <div className={styles.messages}>
-        {messages.length === 0 ? (
-          <Empty
-            image={<MessageCircle size={52} strokeWidth={1.3} />}
-            description="问我澳门路线、景点、美食或拍照姿势"
+    <section className={styles.chatPage}>
+      <header className={styles.chatToolbar}>
+        <strong>对话</strong>
+        <div className={styles.chatToolbarActions}>
+          <Select
+            className={styles.chatModelSelect}
+            value={selectedModel || undefined}
+            placeholder="选择模型"
+            options={modelOptions}
+            loading={modelsLoading}
+            disabled={sending}
+            showSearch={modelOptions.length > 6}
+            popupMatchSelectWidth={false}
+            optionFilterProp="label"
+            onChange={selectModel}
           />
+          <Button
+            type="text"
+            className={styles.chatToolbarButton}
+            icon={<MessageSquarePlus size={20} />}
+            disabled={sending}
+            aria-label="新建聊天"
+            title="新建聊天"
+            onClick={newChat}
+          />
+          <Button
+            type="text"
+            className={styles.chatToolbarButton}
+            icon={<EllipsisVertical size={21} />}
+            disabled={sending}
+            aria-label="历史对话"
+            title="历史对话"
+            onClick={() => setHistoryOpen(true)}
+          />
+        </div>
+      </header>
+
+      <div className={styles.chatScrollArea}>
+        {qwenpawSelected && !qwenpawConfigured && (
+          <Alert
+            showIcon
+            type="warning"
+            message="尚未配置 QwenPaw"
+            action={
+              <Button size="small" onClick={() => navigate("/local/settings")}>
+                去设置
+              </Button>
+            }
+          />
+        )}
+        {!qwenpawSelected && !fallbackConfigured && (
+          <Alert
+            showIcon
+            type="warning"
+            message="尚未配置模型 API"
+            action={
+              <Button size="small" onClick={() => navigate("/local/settings")}>
+                去设置
+              </Button>
+            }
+          />
+        )}
+        {qwenpawSelected &&
+          qwenpawConfigured &&
+          !loadPrivacySettings().shareTripsWithAgent && (
+            <Alert
+              className={styles.chatPrivacyAlert}
+              showIcon
+              type="info"
+              message="主智能体当前看不到本地旅程"
+            />
+          )}
+
+        {messages.length === 0 ? (
+          <div className={styles.chatWelcome}>
+            <div className={styles.chatWelcomeAvatar}>
+              <Bot size={42} strokeWidth={1.6} />
+            </div>
+            <h2>你好，我今天能帮你做什么？</h2>
+            <p>我是 LensGo 智能助手，可以帮你解答澳门旅行问题。</p>
+            <div className={styles.chatSuggestions}>
+              {[
+                "让我们开启一段新的旅程吧！",
+                "能告诉我你有哪些旅行技能吗？",
+              ].map((prompt) => (
+                <button
+                  type="button"
+                  key={prompt}
+                  disabled={sending}
+                  onClick={() => void send(prompt)}
+                >
+                  <Sparkles size={17} />
+                  <span>{prompt}</span>
+                  <ArrowRight size={17} />
+                </button>
+              ))}
+            </div>
+          </div>
         ) : (
-          messages.map((item) => (
-            <article
-              key={item.id}
-              className={
-                item.role === "user"
-                  ? styles.userMessage
-                  : styles.assistantMessage
-              }
-            >
-              <div className={styles.messageAvatar}>
-                {item.role === "user" ? (
-                  <CircleUserRound size={18} />
-                ) : (
-                  <Bot size={18} />
-                )}
-              </div>
-              <div className={styles.messageContent}>
-                <ReactMarkdown>{item.content}</ReactMarkdown>
-                {!!item.albumItemIds?.length && (
-                  <div className={styles.chatPhotoResults}>
-                    {item.albumItemIds
-                      .map((id) => albumById.get(id))
-                      .filter((photo): photo is AlbumItem => Boolean(photo))
-                      .map((photo) => (
-                        <figure key={photo.id}>
-                          <img src={photo.dataUrl} alt={photo.name} />
-                          <figcaption>
-                            {locationLabel(photo.location)}
-                          </figcaption>
-                        </figure>
-                      ))}
-                  </div>
-                )}
-              </div>
-            </article>
-          ))
+          <div className={styles.messages}>
+            {messages.map((item) => (
+              <article
+                key={item.id}
+                className={
+                  item.role === "user"
+                    ? styles.userMessage
+                    : styles.assistantMessage
+                }
+              >
+                <div className={styles.messageAvatar}>
+                  {item.role === "user" ? (
+                    <CircleUserRound size={18} />
+                  ) : (
+                    <Bot size={18} />
+                  )}
+                </div>
+                <div className={styles.messageContent}>
+                  <ReactMarkdown>{item.content}</ReactMarkdown>
+                  {!!item.albumItemIds?.length && (
+                    <div className={styles.chatPhotoResults}>
+                      {item.albumItemIds
+                        .map((id) => albumById.get(id))
+                        .filter((photo): photo is AlbumItem => Boolean(photo))
+                        .map((photo) => (
+                          <figure key={photo.id}>
+                            <img src={photo.dataUrl} alt={photo.name} />
+                            <figcaption>
+                              {locationLabel(photo.location)}
+                            </figcaption>
+                          </figure>
+                        ))}
+                    </div>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
         )}
         {sending && (
           <div className={styles.thinking}>
@@ -1121,12 +1398,14 @@ function LocalChatPage({
         )}
         <div ref={endRef} />
       </div>
-      <div className={styles.composer}>
+
+      <div className={styles.chatComposer}>
         <Input.TextArea
           value={input}
           onChange={(event) => setInput(event.target.value)}
-          autoSize={{ minRows: 1, maxRows: 5 }}
-          placeholder="输入旅行问题…"
+          autoSize={{ minRows: 2, maxRows: 5 }}
+          maxLength={10000}
+          placeholder="输入消息，询问路线、景点、美食或行程…"
           onPressEnter={(event) => {
             if (!event.shiftKey) {
               event.preventDefault();
@@ -1134,15 +1413,77 @@ function LocalChatPage({
             }
           }}
         />
-        <Button
-          type="primary"
-          shape="circle"
-          icon={<Send size={18} />}
-          loading={sending}
-          disabled={!input.trim()}
-          onClick={() => void send()}
-        />
+        <div className={styles.chatComposerFooter}>
+          <span>{input.length}/10000</span>
+          <Button
+            type="primary"
+            shape="circle"
+            icon={<Send size={18} />}
+            loading={sending}
+            disabled={!input.trim()}
+            aria-label="发送消息"
+            onClick={() => void send()}
+          />
+        </div>
       </div>
+
+      <Drawer
+        className={styles.chatHistoryDrawer}
+        title={
+          <span className={styles.chatHistoryTitle}>
+            <History size={18} /> 历史对话
+          </span>
+        }
+        placement="right"
+        width="88%"
+        open={historyOpen}
+        extra={
+          <Button
+            type="text"
+            icon={<MessageSquarePlus size={18} />}
+            onClick={newChat}
+          >
+            新建
+          </Button>
+        }
+        onClose={() => setHistoryOpen(false)}
+      >
+        <div className={styles.chatHistoryList}>
+          {sessions.map((session) => (
+            <div
+              key={session.id}
+              className={`${styles.chatHistoryItem} ${
+                session.id === activeSessionId
+                  ? styles.chatHistoryItemActive
+                  : ""
+              }`}
+            >
+              <button type="button" onClick={() => selectChat(session.id)}>
+                <strong>{session.title}</strong>
+                <span>
+                  {session.messages[session.messages.length - 1]?.content ||
+                    "还没有消息"}
+                </span>
+                <small>
+                  {new Date(session.updatedAt).toLocaleString([], {
+                    month: "numeric",
+                    day: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </small>
+              </button>
+              <Button
+                type="text"
+                danger
+                icon={<Trash2 size={16} />}
+                aria-label={`删除${session.title}`}
+                onClick={() => deleteChat(session.id)}
+              />
+            </div>
+          ))}
+        </div>
+      </Drawer>
     </section>
   );
 }
@@ -1152,11 +1493,12 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
   const [form] = Form.useForm();
   const [trips, setTrips] = useState<LocalTrip[]>(loadTrips);
   const [generating, setGenerating] = useState(false);
+  const [plannerOpen, setPlannerOpen] = useState(false);
+  const [selectedDay, setSelectedDay] = useState<"overview" | number>(
+    "overview",
+  );
   const [selected, setSelected] = useState<LocalTrip | null>(
     trips.find((trip) => trip.status === "active") || trips[0] || null,
-  );
-  const [expandedTripId, setExpandedTripId] = useState(
-    trips.find((trip) => trip.status === "active")?.id || "",
   );
   const [crowdPlaces, setCrowdPlaces] = useState<CrowdPlace[]>([]);
   const [crowdLoading, setCrowdLoading] = useState(false);
@@ -1261,7 +1603,8 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
       setTrips(next);
       saveTrips(next);
       setSelected(trip);
-      setExpandedTripId(trip.id);
+      setPlannerOpen(false);
+      setSelectedDay("overview");
       message.success("行程已保存到手机");
     } catch (error) {
       message.error(errorText(error));
@@ -1483,7 +1826,6 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
             saveTrips(next);
             const active = next.find((trip) => trip.id === selected.id) || null;
             setSelected(active);
-            setExpandedTripId(selected.id);
             selectedRef.current = active;
             return next;
           });
@@ -1523,18 +1865,68 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
   const selectedIndex = selected?.currentStopIndex ?? -1;
   const nextStop = selected?.stops?.[selectedIndex + 1];
   const nextCrowd = nextStop ? crowdSnapshot(nextStop, crowdPlaces) : undefined;
+  const dayNumbers = Array.from(
+    new Set((selected?.stops || []).map((stop) => stop.day || 1)),
+  ).sort((left, right) => left - right);
+  const visibleStopEntries = (selected?.stops || [])
+    .map((stop, originalIndex) => ({ stop, originalIndex }))
+    .filter(
+      ({ stop }) =>
+        selectedDay === "overview" || (stop.day || 1) === selectedDay,
+    );
+  const scopedTrip = selected
+    ? {
+        ...selected,
+        stops: visibleStopEntries.map(({ stop }) => stop),
+      }
+    : null;
+  const scopedCurrentIndex =
+    selectedDay === "overview"
+      ? selectedIndex
+      : visibleStopEntries.filter(
+          ({ originalIndex }) => originalIndex <= selectedIndex,
+        ).length - 1;
+  const selectedStatus =
+    selected?.status === "active"
+      ? "行程进行中"
+      : selected?.status === "completed"
+      ? "行程已结束"
+      : "行程未开始";
 
   return (
-    <section className={styles.page}>
+    <section className={`${styles.page} ${styles.journeyPage}`}>
       <AppHeader
         title="本地旅行规划"
-        subtitle="只有确认开始的行程才会读取位置并发送客流提醒"
+        subtitle={
+          selected?.status === "active"
+            ? positionText
+            : "选择行程和日期，查看地图路线与详细安排"
+        }
         action={
           <Button
-            type="text"
-            icon={<RefreshCw size={17} />}
-            loading={crowdLoading}
-            onClick={() => void refreshCrowd()}
+            className={`${styles.journeyStartButton} ${
+              selected?.status === "active"
+                ? styles.journeyStopButton
+                : ""
+            }`}
+            type="primary"
+            shape="circle"
+            size="large"
+            icon={
+              selected?.status === "active" ? (
+                <Square size={17} />
+              ) : (
+                <Play size={18} />
+              )
+            }
+            disabled={!selected}
+            aria-label={
+              selected?.status === "active" ? "结束当前行程" : "开始当前行程"
+            }
+            title={
+              selected?.status === "active" ? "结束当前行程" : "开始当前行程"
+            }
+            onClick={selected?.status === "active" ? finishTrip : startTrip}
           />
         }
       />
@@ -1551,7 +1943,255 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
           }
         />
       )}
-      <Card className={styles.card}>
+      {selected ? (
+        <>
+          <div className={styles.journeySelectorCard}>
+            <div className={styles.journeySectionHeading}>
+              <span>行程选择</span>
+              <Button
+                type="link"
+                size="small"
+                icon={<Sparkles size={14} />}
+                onClick={() => setPlannerOpen(true)}
+              >
+                规划新行程
+              </Button>
+            </div>
+            <Select
+              className={styles.journeyTripSelect}
+              value={selected.id}
+              suffixIcon={<MapPinned size={17} />}
+              options={trips.map((trip) => ({
+                value: trip.id,
+                label: trip.title,
+              }))}
+              onChange={(tripId) => {
+                const trip = trips.find((item) => item.id === tripId) || null;
+                setSelected(trip);
+                selectedRef.current = trip;
+                setSelectedDay("overview");
+              }}
+            />
+            <div className={styles.journeyTripMeta}>
+              <Tag
+                color={
+                  selected.status === "active"
+                    ? "processing"
+                    : selected.status === "completed"
+                    ? "success"
+                    : "default"
+                }
+              >
+                {selectedStatus}
+              </Tag>
+              <span>{selected.stops?.length || 0} 个路线点</span>
+              <span>
+                {new Date(
+                  selected.updatedAt || selected.createdAt,
+                ).toLocaleDateString()}
+              </span>
+            </div>
+          </div>
+
+          <div className={styles.journeyScopeTabs} aria-label="路线日期选择">
+            <button
+              type="button"
+              className={
+                selectedDay === "overview" ? styles.journeyScopeActive : ""
+              }
+              aria-pressed={selectedDay === "overview"}
+              onClick={() => setSelectedDay("overview")}
+            >
+              总览
+            </button>
+            {dayNumbers.map((day) => (
+              <button
+                type="button"
+                key={day}
+                className={
+                  selectedDay === day ? styles.journeyScopeActive : ""
+                }
+                aria-pressed={selectedDay === day}
+                onClick={() => setSelectedDay(day)}
+              >
+                第{day}天
+              </button>
+            ))}
+          </div>
+
+          <div className={styles.journeyMapCard}>
+            <div className={styles.journeyMapHeader}>
+              <span>
+                <MapIcon size={17} />
+                <strong>
+                  {selectedDay === "overview"
+                    ? "全部路线"
+                    : `第 ${selectedDay} 天路线`}
+                </strong>
+              </span>
+              <Button
+                type="text"
+                size="small"
+                icon={<RefreshCw size={15} />}
+                loading={crowdLoading}
+                onClick={() => void refreshCrowd()}
+              >
+                更新客流
+              </Button>
+            </div>
+            {scopedTrip && (
+              <TripRouteMap
+                trip={scopedTrip}
+                currentStopIndex={scopedCurrentIndex}
+              />
+            )}
+            <div className={styles.journeyMapFootnote}>
+              路线与坐标保存在手机；选择日期可只查看当天线路
+            </div>
+          </div>
+
+          {selected.status === "active" && nextStop && (
+            <div className={styles.nextStopPanel}>
+              <div>
+                <Navigation size={20} />
+                <span>
+                  <small>下一站</small>
+                  <strong>{nextStop.name}</strong>
+                </span>
+              </div>
+              <div>
+                <Users size={20} />
+                <span>
+                  <small>最新客流</small>
+                  <strong>
+                    {nextCrowd?.reading
+                      ? `${nextCrowd.reading.people_count} 人`
+                      : "暂无数据"}
+                  </strong>
+                </span>
+              </div>
+              <div>
+                <Volume2 size={20} />
+                <span>
+                  <small>位置提醒</small>
+                  <strong>已开启</strong>
+                </span>
+              </div>
+            </div>
+          )}
+
+          <Card className={`${styles.card} ${styles.journeyDetailsCard}`}>
+            <div className={styles.journeyDetailsTitle}>
+              <div>
+                <small>
+                  {selectedDay === "overview" ? "完整安排" : "当日安排"}
+                </small>
+                <strong>
+                  {selectedDay === "overview"
+                    ? selected.title
+                    : `第 ${selectedDay} 天行程`}
+                </strong>
+              </div>
+              <span>{visibleStopEntries.length} 站</span>
+            </div>
+            {visibleStopEntries.length ? (
+              <div className={styles.journeyRouteList}>
+                {visibleStopEntries.map(
+                  ({ stop, originalIndex }, displayIndex) => {
+                    const snapshot = crowdSnapshot(stop, crowdPlaces);
+                    return (
+                      <div
+                        key={stop.id}
+                        className={
+                          originalIndex <= selectedIndex
+                            ? styles.tripStopDone
+                            : originalIndex === selectedIndex + 1
+                            ? styles.tripStopNext
+                            : ""
+                        }
+                      >
+                        <span className={styles.tripStopIndex}>
+                          {originalIndex <= selectedIndex ? (
+                            <CheckCircle2 size={16} />
+                          ) : (
+                            displayIndex + 1
+                          )}
+                        </span>
+                        <div>
+                          <span className={styles.journeyStopTopline}>
+                            <strong>{stop.name}</strong>
+                            {snapshot?.reading && (
+                              <Tag
+                                color={
+                                  snapshot.stale
+                                    ? "default"
+                                    : snapshot.reading.crowd_level >= 3
+                                    ? "error"
+                                    : "success"
+                                }
+                              >
+                                {snapshot.stale
+                                  ? "数据已过期"
+                                  : `${snapshot.reading.people_count} 人`}
+                              </Tag>
+                            )}
+                          </span>
+                          <small>
+                            {[
+                              `第 ${stop.day || 1} 天`,
+                              stop.time || "时间待定",
+                            ].join(" · ")}
+                          </small>
+                          {stop.note && <p>{stop.note}</p>}
+                        </div>
+                      </div>
+                    );
+                  },
+                )}
+              </div>
+            ) : (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="该范围暂无路线点" />
+            )}
+            {selected.status === "active" && (
+              <Button
+                className={styles.journeyReplanButton}
+                block
+                icon={<Users size={16} />}
+                loading={replanning}
+                onClick={() => void replanTrip(selected.id)}
+              >
+                按实时人流更新后续行程
+              </Button>
+            )}
+            {selectedDay === "overview" && selected.content && (
+              <details className={styles.journeyFullPlan}>
+                <summary>查看完整规划说明</summary>
+                <div className={styles.markdownCard}>
+                  <ReactMarkdown>{selected.content}</ReactMarkdown>
+                </div>
+              </details>
+            )}
+          </Card>
+        </>
+      ) : (
+        <div className={styles.journeyEmpty}>
+          <Empty description="还没有本地行程，先规划一份澳门路线" />
+          <Button
+            type="primary"
+            icon={<Sparkles size={16} />}
+            onClick={() => setPlannerOpen(true)}
+          >
+            规划新行程
+          </Button>
+        </div>
+      )}
+
+      <Modal
+        title="规划新行程"
+        open={plannerOpen}
+        footer={null}
+        onCancel={() => setPlannerOpen(false)}
+      >
         <Form
           form={form}
           layout="vertical"
@@ -1597,227 +2237,7 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
             生成并保存行程
           </Button>
         </Form>
-      </Card>
-      {trips.length > 0 && (
-        <div className={styles.tripTabs}>
-          {trips.map((trip) => (
-            <button
-              type="button"
-              key={trip.id}
-              className={selected?.id === trip.id ? styles.tripTabActive : ""}
-              onClick={() => {
-                setSelected(trip);
-                selectedRef.current = trip;
-                setExpandedTripId((current) =>
-                  current === trip.id ? "" : trip.id,
-                );
-              }}
-            >
-              <span className={styles.tripSummaryIcon}>
-                <MapPinned size={17} />
-              </span>
-              <span className={styles.tripSummaryText}>
-                <strong>{trip.title}</strong>
-                <small>
-                  {trip.status === "active"
-                    ? "进行中"
-                    : trip.status === "completed"
-                    ? "已完成"
-                    : "未开始"}
-                  {" · "}
-                  {trip.stops?.length || 0} 个景点
-                  {" · "}
-                  {new Date(
-                    trip.updatedAt || trip.createdAt,
-                  ).toLocaleDateString()}
-                </small>
-              </span>
-              <Tag
-                color={
-                  trip.status === "active"
-                    ? "processing"
-                    : trip.status === "completed"
-                    ? "success"
-                    : "default"
-                }
-              >
-                {trip.status === "active"
-                  ? "进行中"
-                  : trip.status === "completed"
-                  ? "已结束"
-                  : "已规划"}
-              </Tag>
-              {expandedTripId === trip.id ? (
-                <ChevronUp size={17} />
-              ) : (
-                <ChevronDown size={17} />
-              )}
-            </button>
-          ))}
-        </div>
-      )}
-      {selected && expandedTripId === selected.id ? (
-        <>
-          <Card
-            className={`${styles.card} ${
-              selected.status === "active" ? styles.activeTripCard : ""
-            }`}
-          >
-            <div className={styles.tripActivation}>
-              <div>
-                <Tag
-                  color={
-                    selected.status === "active"
-                      ? "processing"
-                      : selected.status === "completed"
-                      ? "success"
-                      : "default"
-                  }
-                >
-                  {selected.status === "active"
-                    ? "行程进行中"
-                    : selected.status === "completed"
-                    ? "行程已结束"
-                    : "仅规划，尚未开始"}
-                </Tag>
-                <Typography.Title level={4}>{selected.title}</Typography.Title>
-                <Typography.Text type="secondary">
-                  {selected.status === "active"
-                    ? positionText
-                    : "不会读取位置，也不会发送提醒"}
-                </Typography.Text>
-              </div>
-              {selected.status === "active" ? (
-                <Button danger icon={<Square size={15} />} onClick={finishTrip}>
-                  结束
-                </Button>
-              ) : (
-                <Button
-                  type="primary"
-                  icon={<Play size={16} />}
-                  onClick={startTrip}
-                >
-                  确认开始行程
-                </Button>
-              )}
-            </div>
-            {selected.status === "active" && nextStop && (
-              <div className={styles.nextStopPanel}>
-                <div>
-                  <Navigation size={20} />
-                  <span>
-                    <small>下一站</small>
-                    <strong>{nextStop.name}</strong>
-                  </span>
-                </div>
-                <div>
-                  <Users size={20} />
-                  <span>
-                    <small>最新客流</small>
-                    <strong>
-                      {nextCrowd?.reading
-                        ? `${nextCrowd.reading.people_count} 人`
-                        : "暂无数据"}
-                    </strong>
-                  </span>
-                </div>
-                <div>
-                  <Volume2 size={20} />
-                  <span>
-                    <small>提醒方式</small>
-                    <strong>手机弹窗 + 眼镜语音</strong>
-                  </span>
-                </div>
-              </div>
-            )}
-            {!!selected.stops?.length && (
-              <>
-                <div className={styles.tripMapTitle}>
-                  <MapIcon size={17} />
-                  <strong>路线图</strong>
-                  <span>路线与坐标保存在手机，可离线查看顺序</span>
-                </div>
-                <TripRouteMap
-                  trip={selected}
-                  currentStopIndex={selectedIndex}
-                />
-                <div className={styles.tripRoute}>
-                  {selected.stops.map((stop, index) => {
-                    const snapshot = crowdSnapshot(stop, crowdPlaces);
-                    return (
-                      <div
-                        key={stop.id}
-                        className={
-                          index <= selectedIndex
-                            ? styles.tripStopDone
-                            : index === selectedIndex + 1
-                            ? styles.tripStopNext
-                            : ""
-                        }
-                      >
-                        <span className={styles.tripStopIndex}>
-                          {index <= selectedIndex ? (
-                            <CheckCircle2 size={16} />
-                          ) : (
-                            index + 1
-                          )}
-                        </span>
-                        <span>
-                          <strong>{stop.name}</strong>
-                          <small>
-                            {[
-                              stop.day ? `第 ${stop.day} 天` : "",
-                              stop.time || stop.note || "按行程前往",
-                            ]
-                              .filter(Boolean)
-                              .join(" · ")}
-                          </small>
-                        </span>
-                        {snapshot?.reading && (
-                          <Tag
-                            color={
-                              snapshot.stale
-                                ? "default"
-                                : snapshot.reading.crowd_level >= 3
-                                ? "error"
-                                : "success"
-                            }
-                          >
-                            {snapshot.stale
-                              ? "已过期"
-                              : `${snapshot.reading.people_count} 人`}
-                          </Tag>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </>
-            )}
-            {selected.status === "active" && (
-              <Button
-                block
-                icon={<Users size={16} />}
-                loading={replanning}
-                onClick={() => void replanTrip(selected.id)}
-              >
-                现在按实时人流更新后续行程
-              </Button>
-            )}
-          </Card>
-          <Card className={`${styles.card} ${styles.markdownCard}`}>
-            <ReactMarkdown>{selected.content}</ReactMarkdown>
-          </Card>
-        </>
-      ) : (
-        <Empty
-          description={
-            trips.length
-              ? "点击上方任意行程展开详情"
-              : "生成第一份澳门行程后会显示在这里"
-          }
-        />
-      )}
+      </Modal>
     </section>
   );
 }

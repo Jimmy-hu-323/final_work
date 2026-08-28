@@ -122,6 +122,7 @@ pub fn run() {
             mobile_runtime::mobile_save_crowd_settings,
             mobile_runtime::mobile_fetch_crowd_places,
             mobile_runtime::mobile_test_provider,
+            mobile_runtime::mobile_list_models,
             mobile_runtime::mobile_chat,
             mobile_runtime::mobile_test_qwenpaw,
             mobile_runtime::mobile_qwenpaw_chat,

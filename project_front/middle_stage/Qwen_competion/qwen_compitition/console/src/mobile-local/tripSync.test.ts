@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   extractAgentTripProposal,
   proposalFromRemoteItinerary,
+  stripAgentControlContent,
 } from "./tripSync";
 
 describe("trip sync", () => {
@@ -16,6 +17,30 @@ describe("trip sync", () => {
       longitude: 113.545,
       latitude: 22.197,
     });
+  });
+
+  it("hides trip bridge payloads and internal comments from chat", () => {
+    const reply = `行程已经准备好了。
+
+\`\`\`lensgo-trip-update
+{"tripId":"new","title":"澳门一日游","markdown":"# 澳门一日游","stops":[{"id":"s1","name":"大三巴","day":1,"time":"09:00"}]}
+\`\`\`
+
+<!-- [输出 lensgo-trip-update 代码块等待用户确认写入] -->`;
+    expect(stripAgentControlContent(reply)).toBe("行程已经准备好了。");
+  });
+
+  it("hides an incomplete streaming control block", () => {
+    expect(
+      stripAgentControlContent(
+        "正在生成。\n\n```lensgo-trip-update\n{\"tripId\":\"new\"",
+      ),
+    ).toBe("正在生成。");
+  });
+
+  it("keeps ordinary JSON examples visible", () => {
+    const reply = '示例：\n\n```json\n{"city":"澳门"}\n```';
+    expect(stripAgentControlContent(reply)).toBe(reply);
   });
 
   it("converts the server AMap snapshot to a mappable local trip", () => {

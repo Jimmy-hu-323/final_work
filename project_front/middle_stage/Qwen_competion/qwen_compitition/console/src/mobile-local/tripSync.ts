@@ -72,6 +72,51 @@ export function extractAgentTripProposal(
   return null;
 }
 
+function stripTrailingProposalJson(value: string): string {
+  const end = value.lastIndexOf("}");
+  if (end < 0 || value.slice(end + 1).trim()) return value;
+  let start = value.lastIndexOf("{", end);
+  while (start >= 0) {
+    try {
+      const raw = JSON.parse(value.slice(start, end + 1)) as Record<
+        string,
+        unknown
+      >;
+      if (proposalFromObject(raw)) {
+        return `${value.slice(0, start)}${value.slice(end + 1)}`;
+      }
+    } catch {
+      // Keep looking for the outer opening brace of a nested JSON object.
+    }
+    start = value.lastIndexOf("{", start - 1);
+  }
+  return value;
+}
+
+/** Hide machine-readable trip bridge payloads while keeping them parseable upstream. */
+export function stripAgentControlContent(value: string): string {
+  let visible = value
+    .replace(/<!--[\s\S]*?(?:-->|$)/g, "")
+    .replace(
+      /<lensgo[-_]trip[-_]update\b[^>]*>[\s\S]*?(?:<\/lensgo[-_]trip[-_]update\s*>|$)/gi,
+      "",
+    )
+    .replace(
+      /```lensgo[-_]trip[-_]update\b[^\n]*\n?[\s\S]*?(?:```|$)/gi,
+      "",
+    );
+
+  visible = visible.replace(
+    /```json\s*([\s\S]*?)```/gi,
+    (block, body: string) => {
+      const raw = jsonObject(body);
+      return raw && proposalFromObject(raw) ? "" : block;
+    },
+  );
+  visible = stripTrailingProposalJson(visible);
+  return visible.replace(/\n{3,}/g, "\n\n").trim();
+}
+
 function coordinate(
   location?: string,
 ): { longitude: number; latitude: number } | null {

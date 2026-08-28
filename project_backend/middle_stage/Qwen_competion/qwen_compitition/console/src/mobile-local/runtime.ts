@@ -217,6 +217,54 @@ export type HotelPaymentAuthorization = {
   agent_name?: string;
 };
 
+export type TripExpenseCategory =
+  | "hotel"
+  | "ticket"
+  | "transport"
+  | "meal"
+  | "other";
+
+export type TripExpense = {
+  id: string;
+  trip_id: string;
+  category: TripExpenseCategory;
+  title: string;
+  place_name: string;
+  latitude: number | null;
+  longitude: number | null;
+  day: number | null;
+  unit_amount: number;
+  quantity: number;
+  amount: number;
+  currency: string;
+  required: boolean;
+  note: string;
+  source: string;
+  booking_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TripExpenseSummary = {
+  total: number;
+  required_total: number;
+  optional_total: number;
+  by_category: Record<string, number>;
+  count: number;
+  currency: string;
+};
+
+export type TripExpenseInput = {
+  title: string;
+  category: TripExpenseCategory;
+  placeName?: string;
+  day?: number | null;
+  unitAmount: number;
+  quantity: number;
+  required: boolean;
+  note?: string;
+};
+
 const DEFAULT_PROMPT =
   "你是 LensGo 澳门旅游助手。请用简洁、可靠、友好的中文回答，优先提供澳门旅行、路线、拍照姿势、安全和文化背景建议；涉及实时开放时间、票价或天气时明确提醒用户核实最新信息。";
 const BROWSER_SETTINGS_KEY = "lensgo_mobile_provider_preview";
@@ -306,9 +354,14 @@ export async function testMobileProvider(): Promise<ChatResponse> {
   return invoke<ChatResponse>("mobile_test_provider");
 }
 
+export async function listMobileModels(): Promise<string[]> {
+  if (!isTauri()) return [];
+  return invoke<string[]>("mobile_list_models");
+}
+
 export async function mobileChat(
   messages: Array<{ role: "user" | "assistant" | "system"; content: string }>,
-  options: { temperature?: number; maxTokens?: number } = {},
+  options: { model?: string; temperature?: number; maxTokens?: number } = {},
 ): Promise<ChatResponse> {
   if (!isTauri()) {
     throw new Error("请在 Android App 中调用本地模型运行时");
@@ -316,6 +369,7 @@ export async function mobileChat(
   return invoke<ChatResponse>("mobile_chat", {
     request: {
       messages,
+      model: options.model,
       temperature: options.temperature,
       maxTokens: options.maxTokens,
     },
@@ -351,6 +405,9 @@ type HotelGatewayPayload = {
   billIds?: string[];
   authorizationId?: string;
   action?: "request" | "grant" | "revoke";
+  tripId?: string;
+  expenseId?: string;
+  expense?: Record<string, unknown>;
 };
 
 async function hotelGateway<T>(
@@ -419,6 +476,70 @@ export async function updateHotelPaymentAuthorization(
 
 export async function payHotelBills(billIds: string[]): Promise<void> {
   await hotelGateway({ operation: "pay", billIds });
+}
+
+function tripExpensePayload(input: TripExpenseInput): Record<string, unknown> {
+  return {
+    title: input.title,
+    category: input.category,
+    place_name: input.placeName || "",
+    day: input.day ?? null,
+    unit_amount: input.unitAmount,
+    quantity: input.quantity,
+    required: input.required,
+    note: input.note || "",
+  };
+}
+
+export async function listTripExpenses(
+  tripId: string,
+): Promise<{ expenses: TripExpense[]; summary: TripExpenseSummary }> {
+  const result = await hotelGateway<{
+    expenses?: TripExpense[];
+    summary?: TripExpenseSummary;
+  }>({ operation: "list_trip_expenses", tripId });
+  const expenses = result.expenses || [];
+  return {
+    expenses,
+    summary: result.summary || {
+      total: expenses.reduce((sum, item) => sum + item.amount, 0),
+      required_total: expenses
+        .filter((item) => item.required)
+        .reduce((sum, item) => sum + item.amount, 0),
+      optional_total: expenses
+        .filter((item) => !item.required)
+        .reduce((sum, item) => sum + item.amount, 0),
+      by_category: {},
+      count: expenses.length,
+      currency: expenses[0]?.currency || "CNY",
+    },
+  };
+}
+
+export async function createTripExpense(
+  tripId: string,
+  input: TripExpenseInput,
+): Promise<void> {
+  await hotelGateway({
+    operation: "create_trip_expense",
+    tripId,
+    expense: tripExpensePayload(input),
+  });
+}
+
+export async function updateTripExpense(
+  expenseId: string,
+  input: TripExpenseInput,
+): Promise<void> {
+  await hotelGateway({
+    operation: "update_trip_expense",
+    expenseId,
+    expense: tripExpensePayload(input),
+  });
+}
+
+export async function deleteTripExpense(expenseId: string): Promise<void> {
+  await hotelGateway({ operation: "delete_trip_expense", expenseId });
 }
 
 export type MobilePrivacySettings = {
