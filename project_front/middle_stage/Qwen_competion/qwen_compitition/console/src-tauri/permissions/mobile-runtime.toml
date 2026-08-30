@@ -12,6 +12,8 @@ commands.allow = [
   "mobile_test_qwenpaw",
   "mobile_qwenpaw_chat",
   "mobile_qwenpaw_latest_itinerary",
+  "mobile_trip_guide_nearby",
+  "mobile_trip_guide_origin",
   "mobile_hotel_gateway",
   "mobile_qwenpaw_route",
   "mobile_upload_cloud_photo",

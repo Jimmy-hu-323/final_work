@@ -128,6 +128,9 @@ pub struct HotelGatewayRequest {
     bill_ids: Option<Vec<String>>,
     authorization_id: Option<String>,
     action: Option<String>,
+    trip_id: Option<String>,
+    expense_id: Option<String>,
+    expense: Option<Value>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -823,6 +826,60 @@ pub async fn mobile_qwenpaw_latest_itinerary(app: AppHandle) -> Result<Option<Va
 }
 
 #[tauri::command]
+pub async fn mobile_trip_guide_nearby(
+    app: AppHandle,
+    latitude: f64,
+    longitude: f64,
+    kind: String,
+) -> Result<Value, String> {
+    if !latitude.is_finite() || !longitude.is_finite()
+        || !(-90.0..=90.0).contains(&latitude) || !(-180.0..=180.0).contains(&longitude)
+        || !matches!(kind.as_str(), "food" | "photo")
+    {
+        return Err("附近导览查询参数无效".to_string());
+    }
+    let settings = load_stored_settings(&app)?;
+    let endpoint = qwenpaw_endpoint(&settings, "/api/travel-planner/guide/nearby")?;
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(25))
+        .build().map_err(|_| "无法初始化附近导览连接".to_string())?;
+    let response = qwenpaw_request(&client, &settings, reqwest::Method::POST, endpoint)
+        .json(&json!({ "latitude": latitude, "longitude": longitude, "kind": kind }))
+        .send().await.map_err(|_| "附近地点服务连接失败，请稍后重试".to_string())?;
+    if !response.status().is_success() {
+        return Err("附近地点服务暂不可用，请稍后重试".to_string());
+    }
+    response.json::<Value>().await.map_err(|_| "附近地点返回格式无效".to_string())
+}
+
+#[tauri::command]
+pub async fn mobile_trip_guide_origin(
+    app: AppHandle,
+    latitude: f64,
+    longitude: f64,
+) -> Result<Value, String> {
+    if !latitude.is_finite() || !longitude.is_finite()
+        || !(-90.0..=90.0).contains(&latitude) || !(-180.0..=180.0).contains(&longitude)
+    {
+        return Err("出发地查询参数无效".to_string());
+    }
+    let settings = load_stored_settings(&app)?;
+    let endpoint = qwenpaw_endpoint(&settings, "/api/travel-planner/guide/origin")?;
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(15))
+        .build().map_err(|_| "无法初始化出发地连接".to_string())?;
+    let response = qwenpaw_request(&client, &settings, reqwest::Method::POST, endpoint)
+        .json(&json!({ "latitude": latitude, "longitude": longitude }))
+        .send().await.map_err(|_| "出发地服务暂不可用".to_string())?;
+    if !response.status().is_success() {
+        return Err("出发地服务暂不可用".to_string());
+    }
+    response.json::<Value>().await.map_err(|_| "出发地返回格式无效".to_string())
+}
+
+#[tauri::command]
 pub async fn mobile_hotel_gateway(
     app: AppHandle,
     request: HotelGatewayRequest,
@@ -840,6 +897,8 @@ pub async fn mobile_hotel_gateway(
     }
 
     let bill_id = request.bill_id.as_deref().unwrap_or("");
+    let trip_id = request.trip_id.as_deref().unwrap_or("");
+    let expense_id = request.expense_id.as_deref().unwrap_or("");
     let (method, path, body) = match request.operation.as_str() {
         "list_bills" | "list_authorizations" => (
             reqwest::Method::GET,
@@ -888,7 +947,40 @@ pub async fn mobile_hotel_gateway(
                 Some(json!({"bill_ids": bill_ids})),
             )
         }
-        _ => return Err("不支持的酒店账单操作".to_string()),
+        "list_trip_expenses" if safe_id(trip_id) => (
+            reqwest::Method::GET,
+            format!("/api/travel-planner/trip-expenses?trip_id={trip_id}"),
+            None,
+        ),
+        "create_trip_expense" if safe_id(trip_id) => {
+            let mut payload = request.expense.unwrap_or_else(|| json!({}));
+            let Some(object) = payload.as_object_mut() else {
+                return Err("费用内容格式无效".to_string());
+            };
+            object.insert("trip_id".to_string(), json!(trip_id));
+            (
+                reqwest::Method::POST,
+                "/api/travel-planner/trip-expenses".to_string(),
+                Some(payload),
+            )
+        }
+        "update_trip_expense" if safe_id(expense_id) => {
+            let payload = request.expense.unwrap_or_else(|| json!({}));
+            if !payload.is_object() {
+                return Err("费用内容格式无效".to_string());
+            }
+            (
+                reqwest::Method::PATCH,
+                format!("/api/travel-planner/trip-expenses/{expense_id}"),
+                Some(payload),
+            )
+        }
+        "delete_trip_expense" if safe_id(expense_id) => (
+            reqwest::Method::DELETE,
+            format!("/api/travel-planner/trip-expenses/{expense_id}"),
+            None,
+        ),
+        _ => return Err("不支持的账单操作".to_string()),
     };
 
     let endpoint = qwenpaw_endpoint(&settings, &path)?;
@@ -900,14 +992,14 @@ pub async fn mobile_hotel_gateway(
     let response = builder
         .send()
         .await
-        .map_err(|error| format!("无法连接酒店账单网关：{error}"))?;
+        .map_err(|error| format!("无法连接账单网关：{error}"))?;
     if !response.status().is_success() {
         return Err(parse_error(response).await);
     }
     response
         .json::<Value>()
         .await
-        .map_err(|error| format!("酒店账单网关返回格式无效：{error}"))
+        .map_err(|error| format!("账单网关返回格式无效：{error}"))
 }
 
 #[tauri::command]

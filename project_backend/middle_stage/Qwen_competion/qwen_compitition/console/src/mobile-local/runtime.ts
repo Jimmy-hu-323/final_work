@@ -61,6 +61,8 @@ export type LocalTrip = {
   content: string;
   createdAt: number;
   stops?: TripStop[];
+  guidePlaces?: TripStop[];
+  guideDestination?: TripStop;
   status?: "planned" | "active" | "completed";
   currentStopIndex?: number;
   startedAt?: number;
@@ -698,6 +700,7 @@ export function loadTrips(): LocalTrip[] {
 
 export function saveTrips(trips: LocalTrip[]): void {
   localStorage.setItem(TRIPS_KEY, JSON.stringify(trips.slice(0, 30)));
+  window.dispatchEvent(new Event("lensgo-trips-changed"));
 }
 
 export function loadMemory(): string {

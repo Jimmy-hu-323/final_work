@@ -127,6 +127,8 @@ pub fn run() {
             mobile_runtime::mobile_test_qwenpaw,
             mobile_runtime::mobile_qwenpaw_chat,
             mobile_runtime::mobile_qwenpaw_latest_itinerary,
+            mobile_runtime::mobile_trip_guide_nearby,
+            mobile_runtime::mobile_trip_guide_origin,
             mobile_runtime::mobile_hotel_gateway,
             mobile_runtime::mobile_qwenpaw_route,
             mobile_runtime::mobile_upload_cloud_photo,

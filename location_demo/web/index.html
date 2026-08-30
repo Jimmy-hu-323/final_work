@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>LensGo · 定位演示控制台</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/presets.css"><script src="/app.js" defer></script></head>
+<body>
+<header class="topbar"><a class="brand" href="/" aria-label="LensGo 定位控制台">LensGo<span>定位演示控制台</span></a><div class="top-actions"><span class="local-badge"><i></i> LOCAL ONLY</span><button class="restore" id="restore" disabled>↶ 恢复真实定位</button></div></header>
+<main>
+  <section class="intro"><div><p class="eyebrow">MACAU · LIVE DEMO</p><h1>下一站，<em>由你掌控。</em></h1><p class="subtitle">用电脑切换手机的系统模拟位置，让真实的导览流程在眼前发生。</p></div><span class="connection-pill" id="connection">正在连接控制台…</span></section>
+  <div id="notice" class="notice" role="alert" hidden></div>
+  <section class="dashboard">
+    <div class="main-column">
+      <section class="scene panel" aria-label="景点示意图">
+        <div class="scene-header"><div><span class="eyebrow">LOCATION PREVIEW</span><h2 id="target-name">景点外 · 演示起点</h2></div><span class="mode-chip" id="mode">未开启模拟</span></div>
+        <div class="map-stage">
+          <svg class="map" viewBox="0 0 760 325" role="img" aria-label="澳门测试景点相对位置示意，非导航地图">
+            <defs><pattern id="grid" width="36" height="36" patternUnits="userSpaceOnUse"><path d="M 36 0 L 0 0 0 36" fill="none" stroke="#dfe7df" stroke-width="1"/></pattern></defs>
+            <rect width="760" height="325" fill="url(#grid)"/>
+            <path d="M630 0C570 90 725 125 638 220S700 310 760 310V0Z" fill="#c5dbdc"/>
+            <path d="M0 280C150 230 180 292 280 230S450 128 523 150 600 78 710 26" fill="none" stroke="#fffdf7" stroke-width="23"/>
+            <path d="M230 0L278 78 235 170 323 325M410 0L385 118 510 235 496 325M70 82L665 290" fill="none" stroke="#fffdf7" stroke-width="14"/>
+            <path class="route-path" d="M155 255 Q280 170 425 98 Q464 158 397 214"/>
+            <g class="map-dot" data-point="outside"><circle cx="155" cy="255" r="10"/><text x="175" y="260">演示起点</text></g>
+            <g class="map-dot" data-point="stpaul"><circle cx="425" cy="98" r="10"/><text x="445" y="103">大三巴牌坊</text></g>
+            <g class="map-dot" data-point="senado"><circle cx="397" cy="214" r="10"/><text x="417" y="220">议事亭前地</text></g>
+            <g id="marker" transform="translate(155 255)"><circle class="marker-halo" r="31"/><circle r="13" fill="#f06c37" stroke="white" stroke-width="5"/></g>
+          </svg>
+          <span class="map-caption">景点示意图 · 非导航地图</span><span class="custom-marker" id="custom-marker" hidden>自定义位置 · 不在预设示意图内</span>
+        </div>
+        <div class="coordinate-row"><div><span>发送给手机 · WGS84</span><strong id="wgs-coords">22.185000, 113.530000</strong></div><div><span>对应 App 地图 · GCJ02</span><strong id="gcj-coords">—</strong></div><span class="accuracy">精度 5 m</span></div>
+      </section>
+      <section class="presets-section"><div class="section-heading"><h2>一键切换位置 · <span id="preset-count">加载中</span></h2><span>未开始时选择目标，开始后点击即切换</span></div><div class="preset-filter"><label for="preset-group">位置分类</label><select id="preset-group"><option value="">全部位置</option><option value="酒店出发">酒店出发</option><option value="半岛">澳门半岛</option><option value="氹仔路氹">氹仔 / 路氹</option><option value="路环">路环</option></select></div><div class="presets" id="presets"></div></section>
+      <section class="panel progress-panel"><div class="progress-title"><div><p class="eyebrow">ARRIVAL CHECK</p><h2 id="dwell-title">等待开始演示</h2></div><strong id="elapsed">00<span>s</span></strong></div><progress id="dwell-progress" max="30" value="0" aria-label="建议停留时间"></progress><div class="progress-meta"><span id="send-status">尚未发送位置</span><span>建议同一位置停留约 30 秒</span></div><p class="muted">这里显示的是 ADB 发送状态，不代表 App 已触发。请在手机中观察新的景点对话。</p></section>
+      <section class="panel log-panel"><div class="section-heading"><h2>操作记录</h2><span>只记录本次模拟操作</span></div><ol id="events"><li class="muted">开始后，定位切换与恢复记录会显示在这里。</li></ol></section>
+    </div>
+    <aside class="side-column">
+      <section class="panel control-panel"><div class="section-heading"><h2>连接你的手机</h2><button id="refresh" class="text-button" aria-label="刷新连接设备">刷新</button></div><label for="device">Type-C / ADB 设备</label><select id="device"><option value="">正在查找…</option></select><p class="device-help" id="device-help">解锁手机，并允许 USB 调试。</p><button class="secondary full" id="open-app" disabled>打开 LensGo 本地版 ↗</button><div class="divider"></div><label for="coordinate">输入坐标系</label><select id="coordinate"><option value="wgs84">WGS84 · GPS / 本页预设</option><option value="gcj02">GCJ02 · 高德 / App 地图</option></select><div class="fields"><div><label for="latitude">纬度 Latitude</label><input id="latitude" type="number" min="-90" max="90" step="any" value="22.185" required></div><div><label for="longitude">经度 Longitude</label><input id="longitude" type="number" min="-180" max="180" step="any" value="113.53" required></div></div><label for="custom-name">位置名称 <span class="optional">可选</span></label><input id="custom-name" maxlength="48" value="景点外 · 演示起点" placeholder="例如：我的第三个景点"><button id="apply" class="secondary full">应用自定义坐标</button><button id="start" class="primary full" disabled><span>▶</span> 开始模拟定位</button><p class="safety-note">模拟期间会影响手机上使用该位置源的其他应用。演示结束请点击“恢复真实定位”。</p></section>
+      <section class="guide-panel"><p class="eyebrow">YOUR DEMO, STEP BY STEP</p><h2>演示，只需四步</h2><ol><li><b>01</b><div><strong>从酒店或其他位置出发</strong><p>选择酒店附近，开始模拟，再在手机“旅程”点击开始。</p></div></li><li><b>02</b><div><strong>展示“接下来想去哪里”</strong><p>查看当前位置、候选景点人数和颜色，选择目的地或自由走走。</p></div></li><li><b>03</b><div><strong>切换位置，展示自动导览</strong><p>切到景点停留约 30 秒；在新对话中继续选美食或拍照。</p></div></li><li><b>04</b><div><strong>收尾，恢复真实定位</strong><p>先结束 App 旅程，再点击控制台恢复。</p></div></li></ol><div class="tip">新版可识别当前行程及已加载目录中的景点，不要求按顺序走。每轮请使用新的演示行程；已讲解景点不重复触发。预设为近似位置，酒店名称识别以地图返回为准。</div></section>
+    </aside>
+  </section>
+  <footer><span>独立演示工具 · 不读取聊天或真实位置 · 不改 App 界面</span><span>网页失联 90 秒 / 连续运行 30 分钟后自动尝试恢复</span></footer>
+</main>
+</body></html>

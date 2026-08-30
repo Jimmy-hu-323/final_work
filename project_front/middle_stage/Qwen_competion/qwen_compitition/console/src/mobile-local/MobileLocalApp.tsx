@@ -23,7 +23,6 @@ import {
 } from "antd";
 import {
   ArrowRight,
-  BellRing,
   Bot,
   Camera,
   CheckCircle2,
@@ -83,7 +82,6 @@ import {
   listAlbumItems,
   listMobileModels,
   loadMemory,
-  loadMessages,
   loadMobileSettings,
   loadPrivacySettings,
   loadTrips,
@@ -107,15 +105,14 @@ import {
   type MobileSettingsInput,
   type MobilePrivacySettings,
   type TripPosition,
+  type TripStop,
 } from "./runtime";
 import {
   announceTripUpdate,
   crowdCatalogForPrompt,
-  crowdLabel,
   crowdSnapshot,
   extractTripPlan,
   fetchCrowdPlaces,
-  formatCrowdReminder,
   geolocationErrorMessage,
   inferStopsFromMarkdown,
   loadCrowdServiceConfig,
@@ -124,7 +121,6 @@ import {
   requestInitialTripPosition,
   revisedTripMarkdown,
   saveCrowdServiceConfig,
-  startNativeLocationWatch,
   toTripPosition,
   type CrowdPlace,
   type CrowdServiceConfig,
@@ -132,7 +128,19 @@ import {
 import AlbumMap from "./AlbumMap";
 import HotelBillsPage from "./HotelBillsPage";
 import TripRouteMap from "./TripRouteMap";
-import { loadQwenPawSessionId, streamQwenPawChat } from "./qwenpaw";
+import { streamQwenPawChat } from "./qwenpaw";
+import {
+  CHAT_SESSIONS_KEY, ACTIVE_CHAT_SESSION_KEY, CHAT_SESSIONS_CHANGED,
+  QWENPAW_MODEL_ID, createChatRemoteSessionId, createChatSession,
+  loadChatSessionState, updateChatSessions, type LocalChatSession,
+} from "./chatSessions";
+import {
+  GUIDE_OPEN_EVENT, GUIDE_POSITION_EVENT, GUIDE_ERROR_EVENT,
+  TRIPS_CHANGED_EVENT, GUIDE_OPTIONS, GUIDE_DEPARTURE_EVENT,
+} from "./tripGuide";
+import { startTripGuideRuntime, replyToTripGuide } from "./tripGuideRuntime";
+import { departureChoices, departureGuidePlaces, fallbackDepartureOrigin, locateDepartureOrigin } from "./tripDeparture";
+import TripDepartureChoices from "./TripDepartureChoices";
 import {
   extractAgentTripProposal,
   proposalFromRemoteItinerary,
@@ -740,99 +748,6 @@ function LocalSettingsPage({
   );
 }
 
-const CHAT_SESSIONS_KEY = "lensgo_mobile_chat_sessions_v1";
-const ACTIVE_CHAT_SESSION_KEY = "lensgo_mobile_active_chat_session_v1";
-const QWENPAW_MODEL_ID = "__lensgo_qwenpaw__";
-
-type LocalChatSession = {
-  id: string;
-  title: string;
-  messages: LocalMessage[];
-  model: string;
-  remoteSessionId: string;
-  createdAt: number;
-  updatedAt: number;
-};
-
-function cleanChatMessages(messages: LocalMessage[]): LocalMessage[] {
-  return messages
-    .map((item) =>
-      item.role === "assistant"
-        ? { ...item, content: stripAgentControlContent(item.content) }
-        : item,
-    )
-    .filter(
-      (item) =>
-        item.role === "user" ||
-        Boolean(item.content.trim()) ||
-        Boolean(item.albumItemIds?.length),
-    );
-}
-
-function createChatRemoteSessionId(): string {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : `lensgo-chat-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
-function createChatSession(
-  model: string,
-  messages: LocalMessage[] = [],
-): LocalChatSession {
-  const now = Date.now();
-  const cleanMessages = cleanChatMessages(messages);
-  const firstQuestion = cleanMessages.find(
-    (item) => item.role === "user",
-  )?.content;
-  return {
-    id: createId("chat"),
-    title: firstQuestion?.trim().slice(0, 24) || "新对话",
-    messages: cleanMessages,
-    model,
-    remoteSessionId: cleanMessages.length
-      ? loadQwenPawSessionId()
-      : createChatRemoteSessionId(),
-    createdAt: cleanMessages[0]?.createdAt || now,
-    updatedAt: cleanMessages[cleanMessages.length - 1]?.createdAt || now,
-  };
-}
-
-function loadChatSessionState(defaultModel: string): {
-  sessions: LocalChatSession[];
-  activeId: string;
-} {
-  try {
-    const raw = JSON.parse(
-      localStorage.getItem(CHAT_SESSIONS_KEY) || "[]",
-    ) as LocalChatSession[];
-    const sessions = Array.isArray(raw)
-      ? raw
-          .filter(
-            (item) =>
-              item &&
-              typeof item.id === "string" &&
-              Array.isArray(item.messages),
-          )
-          .map((item) => ({
-            ...item,
-            messages: cleanChatMessages(item.messages),
-          }))
-      : [];
-    if (sessions.length) {
-      const activeId = localStorage.getItem(ACTIVE_CHAT_SESSION_KEY) || "";
-      return {
-        sessions,
-        activeId: sessions.some((item) => item.id === activeId)
-          ? activeId
-          : sessions[0].id,
-      };
-    }
-  } catch {
-    // Invalid local history falls back to the legacy current conversation.
-  }
-  const session = createChatSession(defaultModel, loadMessages());
-  return { sessions: [session], activeId: session.id };
-}
 
 function LocalChatPage({
   settings,
@@ -848,12 +763,25 @@ function LocalChatPage({
   const defaultModel = qwenpawConfigured
     ? QWENPAW_MODEL_ID
     : settings?.model || "";
-  const [initialChatState] = useState(() =>
-    loadChatSessionState(defaultModel),
-  );
-  const [sessions, setSessions] = useState<LocalChatSession[]>(
+  const [initialChatState] = useState(() => {
+    const state = loadChatSessionState(defaultModel);
+    localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(state.sessions));
+    return state;
+  });
+  const [sessions, setSessionsState] = useState<LocalChatSession[]>(
     initialChatState.sessions,
   );
+  const setSessions = (
+    update: LocalChatSession[] | ((current: LocalChatSession[]) => LocalChatSession[]),
+  ) => {
+    updateChatSessions((current) => typeof update === "function" ? update(current) : update);
+  };
+  useEffect(() => {
+    const refresh = () => setSessionsState(loadChatSessionState(defaultModel, true).sessions);
+    window.addEventListener(CHAT_SESSIONS_CHANGED, refresh);
+    refresh();
+    return () => window.removeEventListener(CHAT_SESSIONS_CHANGED, refresh);
+  }, [defaultModel]);
   const [activeSessionId, setActiveSessionId] = useState(
     initialChatState.activeId,
   );
@@ -913,7 +841,6 @@ function LocalChatPage({
   };
 
   useEffect(() => {
-    localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(sessions.slice(0, 50)));
     localStorage.setItem(ACTIVE_CHAT_SESSION_KEY, activeSessionId);
     saveMessages(messages);
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -939,9 +866,23 @@ function LocalChatPage({
     void listAlbumItems().then(setAlbumItems);
   }, []);
 
+  useEffect(() => {
+    const open = (event: Event) => {
+      if (sending || input.trim()) return;
+      setActiveSessionId((event as CustomEvent<string>).detail);
+      setHistoryOpen(false);
+    };
+    window.addEventListener(GUIDE_OPEN_EVENT, open);
+    return () => window.removeEventListener(GUIDE_OPEN_EVENT, open);
+  }, [sending, input]);
+
   const send = async (preset?: string) => {
     const text = (preset ?? input).trim();
     if (!text || sending) return;
+    if (activeSession?.guide?.status === "loading") {
+      message.info("景点故事正在讲解，请稍候再追问");
+      return;
+    }
     if (qwenpawSelected ? !qwenpawConfigured : !fallbackConfigured) {
       message.warning(
         qwenpawSelected ? "请先配置 QwenPaw 服务" : "请先配置模型 API",
@@ -964,7 +905,24 @@ function LocalChatPage({
         ? "正在连接 QwenPaw 主智能体…"
         : `正在连接 ${selectedModel}…`,
     );
+    let guideReplyId: string | undefined;
     try {
+      if (activeSession?.guide) {
+        guideReplyId = createId("message");
+        const replyId = guideReplyId;
+        setMessages((current) => [...current, {
+          id: replyId, role: "assistant", content: "", createdAt: Date.now(),
+        }]);
+        const reply = await replyToTripGuide(activeSession, text, (content) =>
+          setMessages((current) => current.map((item) => item.id === replyId ? { ...item, content } : item)),
+          setAgentActivity,
+        );
+        setMessages((current) => current.map((item) => item.id === replyId ? { ...item, content: reply } : item));
+        setSessions((current) => current.map((session) => session.id === activeSession.id ? {
+          ...session, guide: { ...session.guide!, status: "ready" },
+        } : session));
+        return;
+      }
       // The legacy direct-model fallback may search the on-device album.
       // QwenPaw mode deliberately skips this branch: local-only photos must
       // remain invisible to the main agent until the user uploads them.
@@ -1207,6 +1165,12 @@ function LocalChatPage({
         ]);
       }
     } catch (error) {
+      if (guideReplyId) {
+        const replyId = guideReplyId;
+        setMessages((current) => current.map((item) => item.id === replyId ? {
+          ...item, content: "本次导览请求未完成，请稍后重试。已有聊天和旅程已保留。",
+        } : item));
+      }
       message.error(errorText(error));
     } finally {
       setSending(false);
@@ -1370,7 +1334,15 @@ function LocalChatPage({
                   )}
                 </div>
                 <div className={styles.messageContent}>
-                  <ReactMarkdown>{item.content}</ReactMarkdown>
+                  <ReactMarkdown components={activeSession?.guide && item.role === "assistant" ? {
+                    a: ({ node: _node, href, children, ...props }) => {
+                      const match = href?.match(/^#lensgo-guide-([1-6])$/);
+                      return <a {...props} href={href} onClick={match ? (event) => {
+                        event.preventDefault();
+                        void send(GUIDE_OPTIONS[Number(match[1]) - 1]);
+                      } : undefined}>{children}</a>;
+                    },
+                  } : undefined}>{item.content}</ReactMarkdown>
                   {!!item.albumItemIds?.length && (
                     <div className={styles.chatPhotoResults}>
                       {item.albumItemIds
@@ -1508,7 +1480,35 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
   const selectedRef = useRef<LocalTrip | null>(selected);
   const crowdPlacesRef = useRef<CrowdPlace[]>(crowdPlaces);
   const lastCrowdFetchRef = useRef(0);
-  const notifiedRef = useRef("");
+  const departureVersionRef = useRef(0);
+  const departureTripRef = useRef("");
+  const travelMountedRef = useRef(true);
+  const crowdReminderRef = useRef<ReturnType<typeof Modal.confirm> | null>(null);
+
+  useEffect(() => {
+    travelMountedRef.current = true;
+    const refresh = () => {
+      const latest = loadTrips();
+      setTrips(latest);
+      const current = latest.find((trip) => trip.id === selectedRef.current?.id) || null;
+      if (departureTripRef.current && (current?.id !== departureTripRef.current || current.status !== "active")) {
+        departureVersionRef.current += 1;
+        departureTripRef.current = "";
+        crowdReminderRef.current?.destroy();
+        window.dispatchEvent(new CustomEvent(GUIDE_DEPARTURE_EVENT, { detail: false }));
+      }
+      selectedRef.current = current;
+      setSelected(current);
+    };
+    window.addEventListener(TRIPS_CHANGED_EVENT, refresh);
+    return () => {
+      travelMountedRef.current = false;
+      departureVersionRef.current += 1;
+      crowdReminderRef.current?.destroy();
+      window.dispatchEvent(new CustomEvent(GUIDE_DEPARTURE_EVENT, { detail: false }));
+      window.removeEventListener(TRIPS_CHANGED_EVENT, refresh);
+    };
+  }, []);
 
   useEffect(() => {
     selectedRef.current = selected;
@@ -1544,16 +1544,14 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
     tripId: string,
     updater: (trip: LocalTrip) => LocalTrip,
   ) => {
-    setTrips((current) => {
-      const next = current.map((trip) =>
-        trip.id === tripId ? updater(trip) : trip,
-      );
-      saveTrips(next);
-      const updated = next.find((trip) => trip.id === tripId) || null;
-      setSelected(updated);
-      selectedRef.current = updated;
-      return next;
-    });
+    const next = loadTrips().map((trip) =>
+      trip.id === tripId ? updater(trip) : trip,
+    );
+    const updated = next.find((trip) => trip.id === tripId) || null;
+    selectedRef.current = updated;
+    setSelected(updated);
+    setTrips(next);
+    saveTrips(next);
   };
 
   const generate = async () => {
@@ -1649,63 +1647,52 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
     }
   };
 
-  const showNextStopReminder = (
-    trip: LocalTrip,
-    currentIndex: number,
-    places: CrowdPlace[],
-  ) => {
-    const nextStop = trip.stops?.[currentIndex + 1];
-    if (!nextStop) return;
-    const snapshot = crowdSnapshot(nextStop, places);
-    const signature = `${trip.id}:${nextStop.id}:${
-      snapshot?.reading?.batch_id || "none"
-    }`;
-    if (notifiedRef.current === signature) return;
-    notifiedRef.current = signature;
-    const reminder = formatCrowdReminder(nextStop, snapshot);
-    announceTripUpdate("LensGo 下一站提醒", reminder);
-    Modal.confirm({
-      title: `下一站：${nextStop.name}`,
-      icon: <BellRing size={22} color="#ff7f16" />,
-      content: (
-        <div className={styles.reminderContent}>
-          {snapshot?.reading ? (
-            <>
-              <strong>{snapshot.reading.people_count} 人</strong>
-              <Tag
-                color={
-                  snapshot.stale
-                    ? "default"
-                    : snapshot.reading.crowd_level >= 3
-                    ? "error"
-                    : "success"
-                }
-              >
-                {snapshot.stale
-                  ? "数据已过期"
-                  : crowdLabel(snapshot.reading.crowd_level)}
-              </Tag>
-            </>
-          ) : (
-            <Tag>暂无人数数据</Tag>
-          )}
-          <p>{reminder}</p>
-        </div>
-      ),
-      okText: "按客流调整",
-      cancelText: "不用，继续",
-      onOk: () => replanTrip(trip.id),
+  const showDepartureChoices = async (trip: LocalTrip, position: TripPosition) => {
+    if (!travelMountedRef.current || selectedRef.current?.id !== trip.id || selectedRef.current.status !== "active") return;
+    const version = ++departureVersionRef.current;
+    departureTripRef.current = trip.id;
+    window.dispatchEvent(new CustomEvent(GUIDE_DEPARTURE_EVENT, { detail: true }));
+    crowdReminderRef.current?.destroy();
+    const close = () => {
+      if (departureVersionRef.current !== version) return;
+      departureVersionRef.current += 1;
+      departureTripRef.current = "";
+      crowdReminderRef.current?.destroy();
+      crowdReminderRef.current = null;
+      window.dispatchEvent(new CustomEvent(GUIDE_DEPARTURE_EVENT, { detail: false }));
+    };
+    crowdReminderRef.current = Modal.confirm({
+      title: "接下来想去哪里？",
+      icon: <LocateFixed size={22} color="#ff7f16" />,
+      content: <div className={styles.reminderContent}><Spin size="small" /> 正在识别出发地、查询附近景点人流…</div>,
+      okText: "先自由走走",
+      cancelText: "关闭",
+      onOk: close,
+      onCancel: close,
     });
+    const [places, origin] = await Promise.all([
+      refreshCrowd(true), locateDepartureOrigin(position, crowdPlacesRef.current),
+    ]);
+    if (!travelMountedRef.current || selectedRef.current?.id !== trip.id ||
+        selectedRef.current.status !== "active" || selectedRef.current.startedAt !== trip.startedAt) return;
+    const current = selectedRef.current;
+    replaceTrip(trip.id, (latest) => ({ ...latest, guidePlaces: departureGuidePlaces(latest, places) }));
+    if (departureVersionRef.current !== version) return;
+    const choose = (stop: TripStop) => {
+      if (departureVersionRef.current !== version || selectedRef.current?.status !== "active" || selectedRef.current.id !== trip.id) return;
+      replaceTrip(trip.id, (latest) => ({ ...latest, guideDestination: stop }));
+      close();
+      message.success(`已选择${stop.name}，到达后将自动讲解；你也可以自由走动`);
+    };
+    crowdReminderRef.current?.update({ content: <div className={styles.reminderContent}>
+      <TripDepartureChoices origin={origin.available ? origin : fallbackDepartureOrigin(position, places)} choices={departureChoices(current, position, places)} onChoose={choose} />
+    </div> });
   };
 
   const handlePosition = async (tripId: string, position: TripPosition) => {
     const trip = selectedRef.current;
     if (!trip || trip.id !== tripId || trip.status !== "active") return;
     const located = locateTripStop(trip, position);
-    const previousIndex = trip.currentStopIndex ?? -1;
-    const currentIndex = located
-      ? Math.max(previousIndex, located.index)
-      : previousIndex;
     setPositionText(
       located
         ? `已到达 ${
@@ -1713,51 +1700,27 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
           } · 误差约 ${Math.round(position.accuracy)} 米`
         : `定位正常 · 误差约 ${Math.round(position.accuracy)} 米`,
     );
-    replaceTrip(tripId, (current) => ({
-      ...current,
-      currentStopIndex: currentIndex,
-      lastPosition: position,
-    }));
-    let places = crowdPlacesRef.current;
-    if (!places.length || Date.now() - lastCrowdFetchRef.current > 2 * 60_000) {
-      places = await refreshCrowd(true);
-    }
-    const latestTrip = selectedRef.current;
-    if (latestTrip?.id === tripId) {
-      showNextStopReminder(latestTrip, currentIndex, places);
+    if (!crowdPlacesRef.current.length || Date.now() - lastCrowdFetchRef.current > 2 * 60_000) {
+      await refreshCrowd(true);
     }
   };
 
   useEffect(() => {
-    const trip = selected;
-    if (trip?.status !== "active") return;
+    if (selected?.status !== "active") return;
     setPositionText("正在获取手机位置…");
-    const nativeCleanup = startNativeLocationWatch(
-      (position) => void handlePosition(trip.id, position),
-      (error) => {
-        setPositionText(error);
-        message.error(error);
-      },
-    );
-    if (nativeCleanup) return nativeCleanup;
-    if (!("geolocation" in navigator)) {
-      setPositionText("此设备不支持定位");
-      return;
-    }
-    const watchId = navigator.geolocation.watchPosition(
-      (position) => void handlePosition(trip.id, toTripPosition(position)),
-      (error) => {
-        const text = geolocationErrorMessage(error);
-        setPositionText(text);
-        message.error(text);
-      },
-      {
-        enableHighAccuracy: true,
-        maximumAge: 15_000,
-        timeout: 20_000,
-      },
-    );
-    return () => navigator.geolocation.clearWatch(watchId);
+    const positionListener = (event: Event) => {
+      const detail = (event as CustomEvent<{ tripId: string; position: TripPosition }>).detail;
+      if (detail.tripId === selected.id) void handlePosition(detail.tripId, detail.position);
+    };
+    const errorListener = (event: Event) => {
+      setPositionText(String((event as CustomEvent<string>).detail));
+    };
+    window.addEventListener(GUIDE_POSITION_EVENT, positionListener);
+    window.addEventListener(GUIDE_ERROR_EVENT, errorListener);
+    return () => {
+      window.removeEventListener(GUIDE_POSITION_EVENT, positionListener);
+      window.removeEventListener(GUIDE_ERROR_EVENT, errorListener);
+    };
   }, [selected?.id, selected?.status]);
 
   const startTrip = () => {
@@ -1781,7 +1744,7 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
       title: "确认开始这份行程？",
       icon: <LocateFixed size={22} color="#ff7f16" />,
       content:
-        "开启后 LensGo 才会读取手机位置，用于判断已到达的景点、查询下一站人数并发送提醒。未开启的规划不会跟踪位置。",
+        "开启后 LensGo 才会读取手机位置，并通过地图服务识别附近酒店或地标，询问你想去哪里、展示附近景点人流。之后按实际位置触发讲解，不要求按行程顺序。未开启的规划不会跟踪位置。",
       okText: "允许定位并开始",
       cancelText: "暂不开始",
       onOk: async () => {
@@ -1799,15 +1762,12 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
                   },
                 );
               });
-          const prepared: LocalTrip = {
-            ...selected,
-            stops,
-            currentStopIndex: -1,
-          };
-          const located = locateTripStop(prepared, position);
-          const currentIndex = located?.index ?? -1;
-          setTrips((current) => {
-            const next = current.map((trip) => {
+          if (!travelMountedRef.current || selectedRef.current?.id !== selected.id) return;
+          // The chooser owns this short pause; GPS continues, but an arrival
+          // story must not steal the screen while the visitor is choosing.
+          window.dispatchEvent(new CustomEvent(GUIDE_DEPARTURE_EVENT, { detail: true }));
+          const currentIndex = -1;
+            const next = loadTrips().map((trip) => {
               if (trip.id === selected.id) {
                 return {
                   ...trip,
@@ -1817,24 +1777,25 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
                   startedAt: Date.now(),
                   completedAt: undefined,
                   lastPosition: position,
+                  guideDestination: undefined,
+                  guidePlaces: departureGuidePlaces(trip, crowdPlacesRef.current),
                 };
               }
               return trip.status === "active"
                 ? { ...trip, status: "planned" as const }
                 : trip;
             });
-            saveTrips(next);
             const active = next.find((trip) => trip.id === selected.id) || null;
             setSelected(active);
             selectedRef.current = active;
-            return next;
-          });
-          notifiedRef.current = "";
+            setTrips(next);
+            saveTrips(next);
           announceTripUpdate(
             "行程已开始",
-            `${selected.title}已开始，LensGo 会根据位置提醒下一站客流。`,
+            `${selected.title}已开始，请根据当前位置选择想去的地方，也可以自由走动。`,
           );
           message.success("行程已开始，位置跟踪已开启");
+          if (active) void showDepartureChoices(active, position);
         } catch (error) {
           message.error(errorText(error));
           throw error;
@@ -1863,7 +1824,8 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
   };
 
   const selectedIndex = selected?.currentStopIndex ?? -1;
-  const nextStop = selected?.stops?.[selectedIndex + 1];
+  const nextStop = selected?.guideDestination || (selected?.status === "active"
+    ? { id: "guide-unselected", name: "未选择，可自由走动" } : undefined);
   const nextCrowd = nextStop ? crowdSnapshot(nextStop, crowdPlaces) : undefined;
   const dayNumbers = Array.from(
     new Set((selected?.stops || []).map((stop) => stop.day || 1)),
@@ -2999,6 +2961,23 @@ function LocalAppRoutes({
     settings?.qwenpawBaseUrl && settings?.qwenpawAgentId,
   );
   const ready = configured || qwenpawConfigured;
+  const navigate = useNavigate();
+  const location = useLocation();
+  const currentPathRef = useRef(location.pathname);
+  currentPathRef.current = location.pathname;
+  useEffect(() => startTripGuideRuntime(settings), [
+    settings?.qwenpawBaseUrl, settings?.qwenpawAgentId,
+  ]);
+  useEffect(() => {
+    const open = (event: Event) => {
+      // Arrival never navigates away from the other four sections.
+      if (currentPathRef.current !== "/local/travel") return;
+      localStorage.setItem(ACTIVE_CHAT_SESSION_KEY, (event as CustomEvent<string>).detail);
+      navigate("/local/chat");
+    };
+    window.addEventListener(GUIDE_OPEN_EVENT, open);
+    return () => window.removeEventListener(GUIDE_OPEN_EVENT, open);
+  }, [navigate]);
   return (
     <>
       <main className={styles.content}>

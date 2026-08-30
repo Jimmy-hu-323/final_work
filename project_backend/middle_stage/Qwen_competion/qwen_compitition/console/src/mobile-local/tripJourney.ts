@@ -80,6 +80,8 @@ function nativePayloadToTripPosition(
   };
 }
 
+let nativeLocationConsumers = 0;
+
 export function startNativeLocationWatch(
   onPosition: (position: TripPosition) => void,
   onError: (message: string) => void,
@@ -104,11 +106,14 @@ export function startNativeLocationWatch(
   };
   window.addEventListener("lensgo-native-location", positionListener);
   window.addEventListener("lensgo-native-location-error", errorListener);
-  bridge.startLocationUpdates();
+  if (nativeLocationConsumers++ === 0) bridge.startLocationUpdates();
+  let released = false;
   return () => {
+    if (released) return;
+    released = true;
     window.removeEventListener("lensgo-native-location", positionListener);
     window.removeEventListener("lensgo-native-location-error", errorListener);
-    bridge.stopLocationUpdates?.();
+    if (--nativeLocationConsumers === 0) bridge.stopLocationUpdates?.();
   };
 }
 
@@ -123,6 +128,7 @@ export function requestInitialTripPosition(
     }, timeoutMs);
     cleanup = startNativeLocationWatch(
       (position) => {
+        if (Date.now() - position.recordedAt > 30_000 || position.accuracy <= 0 || position.accuracy > 80) return;
         window.clearTimeout(timer);
         cleanup?.();
         resolve(position);

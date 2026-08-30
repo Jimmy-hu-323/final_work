@@ -23,11 +23,14 @@ def read(path: Path) -> str:
 
 def test_trip_page_requires_explicit_activation_and_offers_replanning():
     source = read(MOBILE / "MobileLocalApp.tsx")
-    assert "确认开始行程" in source
+    assert "确认开始这份行程" in source
     assert "允许定位并开始" in source
-    assert "不用，继续" in source
-    assert "按客流调整" in source
-    assert "watchPosition" in source
+    assert "接下来想去哪里" in source
+    assert "先自由走走" in source
+    assert "showNextStopReminder" not in source
+    assert "locateDepartureOrigin(position" in source
+    assert "replanTrip(selected.id)" in source
+    assert "watchPosition" in read(MOBILE / "tripGuideRuntime.ts")
     assert 'status: "active"' in source
 
 
@@ -89,6 +92,8 @@ def test_mobile_runtime_commands_are_allowed_by_mobile_capability():
         "mobile_generate_image",
         "mobile_test_qwenpaw",
         "mobile_qwenpaw_chat",
+        "mobile_trip_guide_origin",
+        "mobile_trip_guide_nearby",
         "mobile_upload_cloud_photo",
         "mobile_delete_cloud_photo",
     ):

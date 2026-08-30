@@ -215,7 +215,8 @@ class LensGoTripBridge(
     private const val NOTIFICATION_PERMISSION_REQUEST = 4102
     const val LOCATION_PERMISSION_REQUEST = 4103
     private const val LOCATION_INTERVAL_MS = 10_000L
-    private const val LOCATION_DISTANCE_M = 20f
+    // Arrival requires consecutive fixes while the visitor stands at a stop.
+    private const val LOCATION_DISTANCE_M = 0f
     private val notificationIds = AtomicInteger(4100)
   }
 }

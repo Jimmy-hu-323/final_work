@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import math
 import os
 import re
 import threading
@@ -11,6 +13,8 @@ import time
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import quote
+from urllib.parse import urlencode
+from urllib.request import urlopen
 
 import httpx
 from fastapi import APIRouter, Body, File, HTTPException, Query, UploadFile
@@ -551,6 +555,171 @@ async def get_route(
             cache[cache_key] = points
             _save_route_cache(cache)
     return {"points": points, "mode": mode, "cached": False}
+
+
+def _guide_amap_key() -> str:
+    """Reuse the authorized crowd map credential for this guide endpoint only.
+
+    Do not import crowd configuration: that would populate this process with
+    unrelated secrets. Read only its two map-key fields, without modifying the
+    file, os.environ, the existing route key resolver, or the crowd service.
+    """
+    configured = _amap_key()
+    if configured:
+        return configured
+    names = ("AMAP_WEB_KEY", "AMAP_KEY")
+    values = {name: os.environ[name] for name in names if name in os.environ}
+    project_root = Path(__file__).resolve().parents[5]
+    configured_root = os.getenv("LENSGO_CROWD_PROJECT_ROOT", "").strip()
+    crowd_root = Path(configured_root).expanduser() if configured_root else project_root.parent / "data_publish"
+    if not crowd_root.is_absolute():
+        crowd_root = project_root / crowd_root
+    try:
+        with (crowd_root / ".env").open(encoding="utf-8-sig") as source:
+            for raw in source:
+                name, separator, value = raw.strip().partition("=")
+                name = name.strip()
+                if separator and name in names:
+                    values.setdefault(name, value.strip().strip('"').strip("'"))
+    except (OSError, UnicodeError):
+        pass
+    return values.get("AMAP_WEB_KEY", values.get("AMAP_KEY", "")).strip()
+
+
+def _guide_number(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        result = float(value)
+    except (ValueError, TypeError):
+        return None
+    return result if math.isfinite(result) else None
+
+
+def _guide_places(payload: dict, radius: int) -> list[dict]:
+    """Normalize real POIs; absent ratings must never become invented scores."""
+    items: list[dict] = []
+    seen: set[str] = set()
+    for poi in payload.get("pois", []) if isinstance(payload.get("pois"), list) else []:
+        if not isinstance(poi, dict):
+            continue
+        location = str(poi.get("location", "")).split(",")
+        if len(location) != 2:
+            continue
+        lng, lat = (_guide_number(part) for part in location)
+        distance = _guide_number(poi.get("distance"))
+        if (lng is None or lat is None or not -180 <= lng <= 180 or not -90 <= lat <= 90
+                or distance is None or not 0 <= distance <= radius):
+            continue
+        name = poi.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        poi_id = str(poi.get("id") or f"{name}:{lng}:{lat}")
+        if poi_id in seen:
+            continue
+        seen.add(poi_id)
+        biz = poi.get("biz_ext") if isinstance(poi.get("biz_ext"), dict) else {}
+        rating = _guide_number(biz.get("rating"))
+        if rating is not None and not 0 < rating <= 5:
+            rating = None
+        items.append({
+            "id": poi_id, "name": name[:200],
+            "address": poi.get("address", "") if isinstance(poi.get("address"), str) else "",
+            "category": poi.get("type", "") if isinstance(poi.get("type"), str) else "",
+            "latitude": lat, "longitude": lng, "distance": distance, "rating": rating,
+        })
+    items.sort(key=lambda item: (item["rating"] is None, -(item["rating"] or 0), item["distance"]))
+    return items[:5]
+
+
+def _fetch_guide_pois(key: str, latitude: float, longitude: float, kind: str, radius: int) -> dict:
+    # AMap's documented v3 around endpoint returns ratings with extensions=all:
+    # https://lbs.amap.com/api/webservice/guide/api/search/
+    # urllib avoids HTTP client's INFO URL logging of the query-string secret.
+    query = urlencode({
+        "key": key, "location": f"{longitude:.6f},{latitude:.6f}",
+        "types": "050000" if kind == "food" else "110000",
+        "radius": radius, "extensions": "all", "sortrule": "weight",
+        "offset": 25, "page": 1, "output": "json",
+    })
+    with urlopen(f"https://restapi.amap.com/v3/place/around?{query}", timeout=15) as response:
+        return json.loads(response.read(1_000_000))
+
+
+@router.post("/guide/nearby")
+async def get_guide_nearby(data: dict = Body(...)) -> dict:
+    """Journey/Chat-only POI search. Coordinates stay out of access-log URLs."""
+    lat, lng = _guide_number(data.get("latitude")), _guide_number(data.get("longitude"))
+    kind = data.get("kind")
+    if (lat is None or lng is None or not -90 <= lat <= 90 or not -180 <= lng <= 180
+            or kind not in ("food", "photo")):
+        raise HTTPException(status_code=400, detail="附近导览查询参数无效")
+    result = {"available": False, "items": [], "radius": 3000, "source": "高德地图 POI"}
+    key = _guide_amap_key()
+    if not key:
+        return {**result, "reason": "当前导览服务未配置高德 Web 服务，无法核实附近地点和评分，请联系维护者后重试。"}
+    try:
+        payload = await asyncio.to_thread(_fetch_guide_pois, key, lat, lng, kind, result["radius"])
+        if not isinstance(payload, dict) or str(payload.get("status")) != "1":
+            return {**result, "reason": "地图查询暂不可用，无法核实附近地点或评分，请稍后重试。"}
+        return {**result, "available": True, "items": _guide_places(payload, result["radius"])}
+    except Exception:
+        # Never expose transport exceptions: they can contain the API key URL.
+        return {**result, "reason": "地图查询超时或连接失败，请稍后重试。"}
+
+
+def _fetch_guide_origin(key: str, latitude: float, longitude: float) -> dict:
+    # https://lbs.amap.com/api/webservice/guide/api/georegeo
+    # Request only on journey start; the provider never receives a GPS stream.
+    query = urlencode({
+        "key": key, "location": f"{longitude:.6f},{latitude:.6f}",
+        "radius": 200, "extensions": "all", "output": "json",
+    })
+    with urlopen(f"https://restapi.amap.com/v3/geocode/regeo?{query}", timeout=10) as response:
+        return json.loads(response.read(1_000_000))
+
+
+def _guide_origin(payload: dict) -> dict:
+    regeo = payload.get("regeocode")
+    regeo = regeo if isinstance(regeo, dict) else {}
+    pois = regeo.get("pois")
+    candidates = []
+    for poi in pois if isinstance(pois, list) else []:
+        if not isinstance(poi, dict):
+            continue
+        name, distance = poi.get("name"), _guide_number(poi.get("distance"))
+        if isinstance(name, str) and name.strip() and distance is not None and 0 <= distance <= 200:
+            candidates.append((distance, name.strip()[:200], str(poi.get("type", ""))))
+    if candidates:
+        distance, name, category = min(candidates, key=lambda item: item[0])
+        # A nearby hotel is not proof the visitor is inside or staying there.
+        return {"available": True, "label": f"你目前在{name}附近", "name": name,
+                "kind": "hotel" if any(word in category for word in ("酒店", "住宿", "宾馆", "賓館")) else "place",
+                "distance": distance, "source": "高德地图附近地点识别"}
+    address = regeo.get("formatted_address")
+    if isinstance(address, str) and address.strip():
+        return {"available": True, "label": f"你目前在{address.strip()[:200]}附近",
+                "kind": "address", "source": "高德地图地址识别"}
+    return {"available": False, "reason": "已获取位置，但地图暂未返回可核实的地点名称。"}
+
+
+@router.post("/guide/origin")
+async def get_guide_origin(data: dict = Body(...)) -> dict:
+    """Journey-only starting-place lookup; do not log coordinates or map keys."""
+    lat, lng = _guide_number(data.get("latitude")), _guide_number(data.get("longitude"))
+    if lat is None or lng is None or not -90 <= lat <= 90 or not -180 <= lng <= 180:
+        raise HTTPException(status_code=400, detail="出发地查询参数无效")
+    unavailable = {"available": False, "reason": "出发地名称暂不可用，仍可根据位置选择附近景点。"}
+    key = _guide_amap_key()
+    if not key:
+        return unavailable
+    try:
+        payload = await asyncio.to_thread(_fetch_guide_origin, key, lat, lng)
+        if not isinstance(payload, dict) or str(payload.get("status")) != "1":
+            return unavailable
+        return _guide_origin(payload)
+    except Exception:
+        return unavailable
 
 
 def _ai_drive_headers() -> dict[str, str]:

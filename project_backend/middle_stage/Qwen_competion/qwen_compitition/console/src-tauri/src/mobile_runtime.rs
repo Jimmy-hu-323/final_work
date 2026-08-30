@@ -826,6 +826,60 @@ pub async fn mobile_qwenpaw_latest_itinerary(app: AppHandle) -> Result<Option<Va
 }
 
 #[tauri::command]
+pub async fn mobile_trip_guide_nearby(
+    app: AppHandle,
+    latitude: f64,
+    longitude: f64,
+    kind: String,
+) -> Result<Value, String> {
+    if !latitude.is_finite() || !longitude.is_finite()
+        || !(-90.0..=90.0).contains(&latitude) || !(-180.0..=180.0).contains(&longitude)
+        || !matches!(kind.as_str(), "food" | "photo")
+    {
+        return Err("附近导览查询参数无效".to_string());
+    }
+    let settings = load_stored_settings(&app)?;
+    let endpoint = qwenpaw_endpoint(&settings, "/api/travel-planner/guide/nearby")?;
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(25))
+        .build().map_err(|_| "无法初始化附近导览连接".to_string())?;
+    let response = qwenpaw_request(&client, &settings, reqwest::Method::POST, endpoint)
+        .json(&json!({ "latitude": latitude, "longitude": longitude, "kind": kind }))
+        .send().await.map_err(|_| "附近地点服务连接失败，请稍后重试".to_string())?;
+    if !response.status().is_success() {
+        return Err("附近地点服务暂不可用，请稍后重试".to_string());
+    }
+    response.json::<Value>().await.map_err(|_| "附近地点返回格式无效".to_string())
+}
+
+#[tauri::command]
+pub async fn mobile_trip_guide_origin(
+    app: AppHandle,
+    latitude: f64,
+    longitude: f64,
+) -> Result<Value, String> {
+    if !latitude.is_finite() || !longitude.is_finite()
+        || !(-90.0..=90.0).contains(&latitude) || !(-180.0..=180.0).contains(&longitude)
+    {
+        return Err("出发地查询参数无效".to_string());
+    }
+    let settings = load_stored_settings(&app)?;
+    let endpoint = qwenpaw_endpoint(&settings, "/api/travel-planner/guide/origin")?;
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(15))
+        .build().map_err(|_| "无法初始化出发地连接".to_string())?;
+    let response = qwenpaw_request(&client, &settings, reqwest::Method::POST, endpoint)
+        .json(&json!({ "latitude": latitude, "longitude": longitude }))
+        .send().await.map_err(|_| "出发地服务暂不可用".to_string())?;
+    if !response.status().is_success() {
+        return Err("出发地服务暂不可用".to_string());
+    }
+    response.json::<Value>().await.map_err(|_| "出发地返回格式无效".to_string())
+}
+
+#[tauri::command]
 pub async fn mobile_hotel_gateway(
     app: AppHandle,
     request: HotelGatewayRequest,
