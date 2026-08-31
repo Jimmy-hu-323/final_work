@@ -84,6 +84,7 @@ export type LocalTrip = {
   agentAccess?: boolean;
   syncStatus?: "local" | "pending" | "synced" | "conflict";
   cloudUpdatedAt?: number;
+  planningSessionId?: string;
 };
 
 export type AlbumItem = {

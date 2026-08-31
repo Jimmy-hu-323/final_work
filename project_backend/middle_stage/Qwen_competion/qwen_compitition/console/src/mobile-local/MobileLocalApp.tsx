@@ -26,11 +26,15 @@ import {
   Bot,
   Camera,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   CircleUserRound,
   Cloud,
   CloudOff,
   CloudUpload,
   EllipsisVertical,
+  Folder,
+  FolderOpen,
   Glasses,
   Image as ImageIcon,
   ImagePlus,
@@ -144,11 +148,14 @@ import {
   ACTIVE_CHAT_SESSION_KEY,
   CHAT_SESSIONS_CHANGED,
   QWENPAW_MODEL_ID,
+  buildChatHistoryGroups,
   createChatRemoteSessionId,
   createChatSession,
+  linkChatSessionToTrip,
   loadChatSessionState,
   updateChatSessions,
   type LocalChatSession,
+  type TripChatFolder,
 } from "./chatSessions";
 import {
   GUIDE_OPEN_EVENT,
@@ -167,6 +174,7 @@ import {
 } from "./tripDeparture";
 import TripDepartureChoices from "./TripDepartureChoices";
 import { deleteTripAndBills } from "./tripDeletion";
+import { renameTrip } from "./tripRenaming";
 import {
   buildEditedTripMarkdown,
   syncTripExpensesForStops,
@@ -850,10 +858,24 @@ function LocalChatPage({
   );
   const [modelsLoading, setModelsLoading] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [chatTrips, setChatTrips] = useState<LocalTrip[]>(loadTrips);
+  const [expandedTripIds, setExpandedTripIds] = useState<string[]>([]);
   const endRef = useRef<HTMLDivElement>(null);
   const chatImageInputRef = useRef<HTMLInputElement>(null);
   const activeSession =
     sessions.find((session) => session.id === activeSessionId) || sessions[0];
+  const activeTripId =
+    activeSession?.tripId || activeSession?.guide?.tripId || "";
+  const activeTrip = chatTrips.find((trip) => trip.id === activeTripId);
+  const activeTripTitle =
+    activeTrip?.title ||
+    activeSession?.tripTitle ||
+    activeSession?.guide?.tripTitle ||
+    "已删除行程的历史对话";
+  const historyGroups = useMemo(
+    () => buildChatHistoryGroups(sessions, chatTrips),
+    [chatTrips, sessions],
+  );
   const messages = activeSession?.messages || [];
   const selectedModel = activeSession?.model || defaultModel;
   const qwenpawSelected = selectedModel === QWENPAW_MODEL_ID;
@@ -928,6 +950,20 @@ function LocalChatPage({
   useEffect(() => {
     void listChatMediaItems().then(setChatMediaItems);
   }, [messages]);
+
+  useEffect(() => {
+    const refreshTrips = () => setChatTrips(loadTrips());
+    window.addEventListener(TRIPS_CHANGED_EVENT, refreshTrips);
+    refreshTrips();
+    return () => window.removeEventListener(TRIPS_CHANGED_EVENT, refreshTrips);
+  }, []);
+
+  useEffect(() => {
+    if (!historyOpen || !activeTripId) return;
+    setExpandedTripIds((current) =>
+      current.includes(activeTripId) ? current : [...current, activeTripId],
+    );
+  }, [activeTripId, historyOpen]);
 
   useEffect(() => {
     const open = (event: Event) => {
@@ -1173,9 +1209,18 @@ function LocalChatPage({
           },
           localTravelMemory: memory || undefined,
           trips: sharedTrips,
+          conversationTrip:
+            activeTrip && privacy.shareTripsWithAgent
+              ? {
+                  id: activeTrip.id,
+                  title: activeTrip.title,
+                  instruction:
+                    "当前对话属于此行程文件夹；所有行程修改必须写回这个 tripId，不得新建或修改其他行程。",
+                }
+              : undefined,
           cloudAlbum,
           instruction:
-            "只能使用本上下文中的旅程和 cloudAlbum；不得声称能看到未同步的本地照片。需要规划或修改路线时使用已配置的澳门旅行 Skill、MCP 和子 Agent。用户确认最终规划后，必须按 Skill 的 LensGo 手机端桥接协议，在回复末尾输出包含完整 stops、高德坐标和逐项 expenses 预算的 lensgo-trip-update 代码块。",
+            "只能使用本上下文中的旅程和 cloudAlbum；不得声称能看到未同步的本地照片。conversationTrip 存在时只能修改它指定的 tripId，不得创建另一份行程。需要规划或修改路线时使用已配置的澳门旅行 Skill、MCP 和子 Agent。用户确认最终规划后，必须按 Skill 的 LensGo 手机端桥接协议，在回复末尾输出包含完整 stops、高德坐标和逐项 expenses 预算的 lensgo-trip-update 代码块。",
         });
         const assistantId = createId("message");
         setMessages((current) => [
@@ -1224,6 +1269,9 @@ function LocalChatPage({
             proposal = proposalFromRemoteItinerary(serverTripAfter);
           }
         }
+        if (proposal && activeTrip) {
+          proposal = { ...proposal, tripId: activeTrip.id };
+        }
         const visibleContent = stripAgentControlContent(finalContent);
         setMessages((current) =>
           current.map((item) =>
@@ -1260,6 +1308,7 @@ function LocalChatPage({
               const latest = loadTrips();
               try {
                 if (target) {
+                  const updatedTitle = proposal.title || target.title;
                   const syncedExpenseCount = await syncTripExpensesForStops(
                     target.id,
                     target.stops || [],
@@ -1270,16 +1319,26 @@ function LocalChatPage({
                       trip.id === proposal.tripId
                         ? {
                             ...trip,
-                            title: proposal.title || trip.title,
+                            title: updatedTitle,
                             content: proposal.content,
                             stops: proposal.stops,
                             updatedAt: now,
                             syncStatus: "local",
                             cloudUpdatedAt: proposal.sourceUpdatedAt,
+                            planningSessionId:
+                              trip.planningSessionId || activeSession?.id,
                           }
                         : trip,
                     ),
                   );
+                  if (activeSession && target.startedAt) {
+                    updateChatSessions((current) =>
+                      linkChatSessionToTrip(current, activeSession.id, {
+                        id: target.id,
+                        title: updatedTitle,
+                      }),
+                    );
+                  }
                   message.success(
                     syncedExpenseCount
                       ? `QwenPaw 的修改已保存，并同步更新 ${syncedExpenseCount} 笔账单`
@@ -1302,6 +1361,7 @@ function LocalChatPage({
                   updatedAt: now,
                   syncStatus: "local",
                   cloudUpdatedAt: proposal.sourceUpdatedAt,
+                  planningSessionId: activeSession?.id,
                 };
                 try {
                   for (const expense of proposal.expenses) {
@@ -1415,8 +1475,14 @@ function LocalChatPage({
     message.success("效果预览已保存到本地相册");
   };
 
-  const newChat = () => {
-    const session = createChatSession(selectedModel || defaultModel);
+  const newChat = (trip?: Pick<LocalTrip, "id" | "title">) => {
+    const session = createChatSession(
+      trip && qwenpawConfigured
+        ? QWENPAW_MODEL_ID
+        : selectedModel || defaultModel,
+      [],
+      trip ? { tripId: trip.id, tripTitle: trip.title } : undefined,
+    );
     setSessions((current) => [session, ...current].slice(0, 50));
     setActiveSessionId(session.id);
     setInput("");
@@ -1453,6 +1519,53 @@ function LocalChatPage({
     );
   };
 
+  const toggleTripFolder = (tripId: string) => {
+    setExpandedTripIds((current) =>
+      current.includes(tripId)
+        ? current.filter((item) => item !== tripId)
+        : [...current, tripId],
+    );
+  };
+
+  const tripFolderStatus = (folder: TripChatFolder) => {
+    if (folder.orphaned) return "行程已删除";
+    if (folder.status === "active") return "进行中";
+    if (folder.status === "completed") return "已结束";
+    return folder.startedAt ? "已暂停" : "未开始";
+  };
+
+  const renderHistoryItem = (session: LocalChatSession) => (
+    <div
+      key={session.id}
+      className={`${styles.chatHistoryItem} ${
+        session.id === activeSessionId ? styles.chatHistoryItemActive : ""
+      }`}
+    >
+      <button type="button" onClick={() => selectChat(session.id)}>
+        <strong>{session.title}</strong>
+        <span>
+          {session.messages[session.messages.length - 1]?.content ||
+            "还没有消息"}
+        </span>
+        <small>
+          {new Date(session.updatedAt).toLocaleString([], {
+            month: "numeric",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })}
+        </small>
+      </button>
+      <Button
+        type="text"
+        danger
+        icon={<Trash2 size={16} />}
+        aria-label={`删除${session.title}`}
+        onClick={() => deleteChat(session.id)}
+      />
+    </div>
+  );
+
   return (
     <section className={styles.chatPage}>
       <header className={styles.chatToolbar}>
@@ -1477,7 +1590,7 @@ function LocalChatPage({
             disabled={sending}
             aria-label="新建聊天"
             title="新建聊天"
-            onClick={newChat}
+            onClick={() => newChat()}
           />
           <Button
             type="text"
@@ -1526,6 +1639,16 @@ function LocalChatPage({
               message="主智能体当前看不到本地旅程"
             />
           )}
+
+        {activeTripId && (
+          <div className={styles.chatTripContext}>
+            <FolderOpen size={18} />
+            <span>
+              <small>当前行程文件夹</small>
+              <strong>{activeTripTitle}</strong>
+            </span>
+          </div>
+        )}
 
         {messages.length === 0 ? (
           <div className={styles.chatWelcome}>
@@ -1746,47 +1869,125 @@ function LocalChatPage({
           <Button
             type="text"
             icon={<MessageSquarePlus size={18} />}
-            onClick={newChat}
+            onClick={() => newChat()}
           >
             新建
           </Button>
         }
         onClose={() => setHistoryOpen(false)}
       >
-        <div className={styles.chatHistoryList}>
-          {sessions.map((session) => (
-            <div
-              key={session.id}
-              className={`${styles.chatHistoryItem} ${
-                session.id === activeSessionId
-                  ? styles.chatHistoryItemActive
-                  : ""
-              }`}
-            >
-              <button type="button" onClick={() => selectChat(session.id)}>
-                <strong>{session.title}</strong>
-                <span>
-                  {session.messages[session.messages.length - 1]?.content ||
-                    "还没有消息"}
-                </span>
-                <small>
-                  {new Date(session.updatedAt).toLocaleString([], {
-                    month: "numeric",
-                    day: "numeric",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
-                </small>
-              </button>
-              <Button
-                type="text"
-                danger
-                icon={<Trash2 size={16} />}
-                aria-label={`删除${session.title}`}
-                onClick={() => deleteChat(session.id)}
-              />
+        <div className={styles.chatHistorySections}>
+          <section className={styles.chatHistorySection}>
+            <div className={styles.chatHistorySectionTitle}>
+              <span>
+                <Folder size={16} /> 行程对话
+              </span>
+              <small>{historyGroups.folders.length} 个文件夹</small>
             </div>
-          ))}
+            <div className={styles.chatTripFolderList}>
+              {historyGroups.folders.length ? (
+                historyGroups.folders.map((folder) => {
+                  const expanded = expandedTripIds.includes(folder.tripId);
+                  const folderActive = folder.sessions.some(
+                    (session) => session.id === activeSessionId,
+                  );
+                  return (
+                    <div
+                      className={`${styles.chatTripFolder} ${
+                        folderActive ? styles.chatTripFolderActive : ""
+                      }`}
+                      key={folder.tripId}
+                    >
+                      <div className={styles.chatTripFolderHeader}>
+                        <button
+                          type="button"
+                          aria-expanded={expanded}
+                          onClick={() => toggleTripFolder(folder.tripId)}
+                        >
+                          {expanded ? (
+                            <FolderOpen size={19} />
+                          ) : (
+                            <Folder size={19} />
+                          )}
+                          <span>
+                            <strong>{folder.title}</strong>
+                            <small>
+                              {tripFolderStatus(folder)} ·{" "}
+                              {folder.sessions.length} 条对话
+                            </small>
+                          </span>
+                          {expanded ? (
+                            <ChevronDown size={17} />
+                          ) : (
+                            <ChevronRight size={17} />
+                          )}
+                        </button>
+                        {!folder.orphaned && (
+                          <Button
+                            type="text"
+                            icon={<MessageSquarePlus size={17} />}
+                            aria-label={`在${folder.title}中新建对话`}
+                            onClick={() =>
+                              newChat({
+                                id: folder.tripId,
+                                title: folder.title,
+                              })
+                            }
+                          />
+                        )}
+                      </div>
+                      {expanded && (
+                        <div className={styles.chatTripFolderContent}>
+                          {folder.sessions.length ? (
+                            folder.sessions.map(renderHistoryItem)
+                          ) : (
+                            <div className={styles.chatHistoryEmpty}>
+                              行程已建立，暂时还没有关联对话
+                            </div>
+                          )}
+                          {!folder.orphaned && (
+                            <Button
+                              block
+                              className={styles.chatTripNewButton}
+                              icon={<MessageSquarePlus size={16} />}
+                              onClick={() =>
+                                newChat({
+                                  id: folder.tripId,
+                                  title: folder.title,
+                                })
+                              }
+                            >
+                              在此行程中新建对话
+                            </Button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              ) : (
+                <div className={styles.chatHistoryEmpty}>
+                  开始行程后，这里会自动建立行程文件夹
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className={styles.chatHistorySection}>
+            <div className={styles.chatHistorySectionTitle}>
+              <span>
+                <MessageCircle size={16} /> 其他对话
+              </span>
+              <small>{historyGroups.otherSessions.length} 条</small>
+            </div>
+            <div className={styles.chatHistoryList}>
+              {historyGroups.otherSessions.length ? (
+                historyGroups.otherSessions.map(renderHistoryItem)
+              ) : (
+                <div className={styles.chatHistoryEmpty}>暂无普通对话</div>
+              )}
+            </div>
+          </section>
         </div>
       </Drawer>
     </section>
@@ -1811,6 +2012,9 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
   const [positionText, setPositionText] = useState("等待开启行程");
   const [replanning, setReplanning] = useState(false);
   const [deletingTripId, setDeletingTripId] = useState("");
+  const [tripRenameOpen, setTripRenameOpen] = useState(false);
+  const [tripRenameTitle, setTripRenameTitle] = useState("");
+  const [renamingTrip, setRenamingTrip] = useState(false);
   const [tripEditorOpen, setTripEditorOpen] = useState(false);
   const [tripEditScope, setTripEditScope] = useState<"overview" | number>(
     "overview",
@@ -1946,6 +2150,40 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
         }
       },
     });
+  };
+
+  const openTripRename = () => {
+    const trip = selectedRef.current;
+    if (!trip) return;
+    setTripRenameTitle(trip.title);
+    setTripRenameOpen(true);
+  };
+
+  const saveTripRename = () => {
+    const trip = selectedRef.current;
+    if (!trip) return;
+    const title = tripRenameTitle.trim();
+    if (!title) {
+      message.warning("请输入行程名称");
+      return;
+    }
+    if (title === trip.title) {
+      setTripRenameOpen(false);
+      return;
+    }
+
+    setRenamingTrip(true);
+    try {
+      const updated = renameTrip(trip.id, title);
+      selectedRef.current = updated;
+      setSelected(updated);
+      setTripRenameOpen(false);
+      message.success("行程名称已更新，“旅程”和“账单”已同步");
+    } catch (error) {
+      message.error(`重命名失败，原名称已保留：${errorText(error)}`);
+    } finally {
+      setRenamingTrip(false);
+    }
   };
 
   const openTripEditor = () => {
@@ -2375,6 +2613,11 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
           selectedRef.current = active;
           setTrips(next);
           saveTrips(next);
+          if (active?.planningSessionId) {
+            updateChatSessions((current) =>
+              linkChatSessionToTrip(current, active.planningSessionId!, active),
+            );
+          }
           announceTripUpdate(
             "行程已开始",
             `${selected.title}已开始，请根据当前位置选择想去的地方，也可以自由走动。`,
@@ -2497,6 +2740,15 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
             <div className={styles.journeySectionHeading}>
               <span>行程选择</span>
               <Space size={4}>
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<Pencil size={14} />}
+                  aria-label={`重命名行程${selected.title}`}
+                  onClick={openTripRename}
+                >
+                  重命名
+                </Button>
                 <Button
                   type="link"
                   size="small"
@@ -2756,6 +3008,31 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
           </Button>
         </div>
       )}
+
+      <Modal
+        title="更改行程名称"
+        open={tripRenameOpen}
+        okText="保存名称"
+        cancelText="取消"
+        confirmLoading={renamingTrip}
+        onOk={saveTripRename}
+        onCancel={() => !renamingTrip && setTripRenameOpen(false)}
+      >
+        <div className={styles.journeyEditIntro}>
+          新名称会同时显示在“旅程”和“账单”栏目，已有账单仍会保留在这份行程下。
+        </div>
+        <label className={styles.journeyEditField}>
+          <span>行程名称</span>
+          <Input
+            value={tripRenameTitle}
+            maxLength={80}
+            autoFocus
+            placeholder="请输入行程名称"
+            onChange={(event) => setTripRenameTitle(event.target.value)}
+            onPressEnter={saveTripRename}
+          />
+        </label>
+      </Modal>
 
       <Modal
         className={styles.journeyEditModal}

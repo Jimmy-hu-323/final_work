@@ -1,4 +1,9 @@
-import { createId, loadMessages, type LocalMessage } from "./runtime";
+import {
+  createId,
+  loadMessages,
+  type LocalMessage,
+  type LocalTrip,
+} from "./runtime";
 import { loadQwenPawSessionId } from "./qwenpaw";
 import { stripAgentControlContent } from "./tripSync";
 import type { GuideContext } from "./tripGuide";
@@ -14,8 +19,25 @@ export type LocalChatSession = {
   model: string;
   remoteSessionId: string;
   guide?: GuideContext;
+  tripId?: string;
+  tripTitle?: string;
   createdAt: number;
   updatedAt: number;
+};
+
+export type ChatTripLink = {
+  tripId: string;
+  tripTitle: string;
+};
+
+export type TripChatFolder = {
+  tripId: string;
+  title: string;
+  status?: LocalTrip["status"];
+  startedAt?: number;
+  updatedAt: number;
+  orphaned: boolean;
+  sessions: LocalChatSession[];
 };
 
 function cleanChatMessages(messages: LocalMessage[]): LocalMessage[] {
@@ -43,6 +65,7 @@ export function createChatRemoteSessionId(): string {
 export function createChatSession(
   model: string,
   messages: LocalMessage[] = [],
+  trip?: ChatTripLink,
 ): LocalChatSession {
   const now = Date.now();
   const cleanMessages = cleanChatMessages(messages);
@@ -56,6 +79,8 @@ export function createChatSession(
     remoteSessionId: cleanMessages.length
       ? loadQwenPawSessionId()
       : createChatRemoteSessionId(),
+    tripId: trip?.tripId,
+    tripTitle: trip?.tripTitle,
     createdAt: cleanMessages[0]?.createdAt || now,
     updatedAt: cleanMessages[cleanMessages.length - 1]?.createdAt || now,
   };
@@ -82,6 +107,14 @@ export function loadChatSessionState(
           )
           .map((item) => ({
             ...item,
+            tripId:
+              typeof item.tripId === "string" && item.tripId
+                ? item.tripId
+                : item.guide?.tripId,
+            tripTitle:
+              typeof item.tripTitle === "string" && item.tripTitle
+                ? item.tripTitle
+                : item.guide?.tripTitle,
             messages: preservePending
               ? item.messages
               : cleanChatMessages(item.messages),
@@ -104,6 +137,84 @@ export function loadChatSessionState(
 }
 
 export const CHAT_SESSIONS_CHANGED = "lensgo-chat-sessions-changed";
+
+export function sessionTripId(session: LocalChatSession): string {
+  return session.tripId || session.guide?.tripId || "";
+}
+
+export function linkChatSessionToTrip(
+  sessions: LocalChatSession[],
+  sessionId: string,
+  trip: Pick<LocalTrip, "id" | "title">,
+): LocalChatSession[] {
+  return sessions.map((session) =>
+    session.id === sessionId
+      ? { ...session, tripId: trip.id, tripTitle: trip.title }
+      : session,
+  );
+}
+
+export function buildChatHistoryGroups(
+  sessions: LocalChatSession[],
+  trips: LocalTrip[],
+): { folders: TripChatFolder[]; otherSessions: LocalChatSession[] } {
+  const byTrip = new Map<string, LocalChatSession[]>();
+  const otherSessions: LocalChatSession[] = [];
+  sessions.forEach((session) => {
+    const tripId = sessionTripId(session);
+    if (!tripId) {
+      otherSessions.push(session);
+      return;
+    }
+    byTrip.set(tripId, [...(byTrip.get(tripId) || []), session]);
+  });
+
+  const folders: TripChatFolder[] = [];
+  trips.forEach((trip) => {
+    const linked = byTrip.get(trip.id) || [];
+    if (!trip.startedAt && !linked.length) return;
+    const ordered = [...linked].sort(
+      (left, right) => right.updatedAt - left.updatedAt,
+    );
+    folders.push({
+      tripId: trip.id,
+      title: trip.title,
+      status: trip.status,
+      startedAt: trip.startedAt,
+      updatedAt: Math.max(
+        trip.updatedAt || trip.startedAt || trip.createdAt,
+        ...ordered.map((session) => session.updatedAt),
+      ),
+      orphaned: false,
+      sessions: ordered,
+    });
+    byTrip.delete(trip.id);
+  });
+
+  byTrip.forEach((linked, tripId) => {
+    const ordered = [...linked].sort(
+      (left, right) => right.updatedAt - left.updatedAt,
+    );
+    folders.push({
+      tripId,
+      title:
+        ordered.find((session) => session.tripTitle)?.tripTitle ||
+        ordered.find((session) => session.guide?.tripTitle)?.guide?.tripTitle ||
+        "已删除行程的历史对话",
+      updatedAt: Math.max(...ordered.map((session) => session.updatedAt)),
+      orphaned: true,
+      sessions: ordered,
+    });
+  });
+
+  folders.sort((left, right) => {
+    const leftActive = left.status === "active" ? 1 : 0;
+    const rightActive = right.status === "active" ? 1 : 0;
+    return rightActive - leftActive || right.updatedAt - left.updatedAt;
+  });
+  otherSessions.sort((left, right) => right.updatedAt - left.updatedAt);
+  return { folders, otherSessions };
+}
 
 // Every writer reads the latest store so arrivals and in-flight replies never
 // replace another conversation with a stale React snapshot.

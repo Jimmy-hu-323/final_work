@@ -85,9 +85,7 @@ describe("HotelBillsPage", () => {
   it("按所选行程展示总预算和可编辑费用明细", async () => {
     render(<HotelBillsPage />);
 
-    expect(
-      await screen.findByText("澳门周末行程 · 共 2 项费用"),
-    ).toBeTruthy();
+    expect(await screen.findByText("澳门周末行程 · 共 2 项费用")).toBeTruthy();
     expect(screen.getByText("¥370.00")).toBeTruthy();
     expect(screen.getByText("酒店住宿")).toBeTruthy();
     expect(screen.getByText("澳门旅游塔门票")).toBeTruthy();
@@ -109,5 +107,21 @@ describe("HotelBillsPage", () => {
     expect(
       await screen.findByText("还没有可选择的行程；请先在“旅程”栏目保存行程"),
     ).toBeTruthy();
+  });
+
+  it("行程重命名后立即同步账单中的行程名称", async () => {
+    render(<HotelBillsPage />);
+    await screen.findByText("澳门周末行程 · 共 2 项费用");
+
+    expenseApi.trips = expenseApi.trips.map((trip) => ({
+      ...trip,
+      title: "澳门文化漫游",
+    }));
+    act(() => window.dispatchEvent(new Event("lensgo-trips-changed")));
+
+    expect(await screen.findByText("澳门文化漫游 · 共 2 项费用")).toBeTruthy();
+    expect(expenseApi.listTripExpenses).toHaveBeenLastCalledWith(
+      "trip-macau-weekend",
+    );
   });
 });

@@ -1044,6 +1044,168 @@
   }
 }
 
+.chatTripContext {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 10px;
+  padding: 9px 11px;
+  border: 1px solid #f0caa8;
+  border-radius: 13px;
+  color: #a44c0c;
+  background: #fff7ef;
+
+  > span {
+    display: grid;
+    min-width: 0;
+    gap: 1px;
+  }
+
+  small {
+    color: #9b7d67;
+    font-size: 10px;
+  }
+
+  strong {
+    overflow: hidden;
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.chatHistorySections,
+.chatHistorySection,
+.chatTripFolderList,
+.chatTripFolderContent {
+  display: grid;
+}
+
+.chatHistorySections {
+  gap: 18px;
+}
+
+.chatHistorySection {
+  gap: 9px;
+}
+
+.chatHistorySectionTitle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 3px;
+  color: #51463f;
+
+  > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  small {
+    color: #9a928c;
+    font-size: 10px;
+  }
+}
+
+.chatTripFolderList,
+.chatTripFolderContent {
+  gap: 8px;
+}
+
+.chatTripFolder {
+  overflow: hidden;
+  border: 1px solid #eadfd5;
+  border-radius: 15px;
+  background: #fff;
+}
+
+.chatTripFolderActive {
+  border-color: #ffb987;
+  box-shadow: 0 5px 16px rgba(177, 86, 20, 0.08);
+}
+
+.chatTripFolderHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px;
+  padding: 5px;
+  background: linear-gradient(180deg, #fff9f3 0%, #fff 100%);
+
+  > button:first-child {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    padding: 8px;
+    border: 0;
+    color: #a84b09;
+    background: transparent;
+    font: inherit;
+    text-align: left;
+
+    > span {
+      display: grid;
+      min-width: 0;
+      gap: 2px;
+    }
+
+    strong,
+    small {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    strong {
+      color: #49382c;
+      font-size: 13px;
+    }
+
+    small {
+      color: #9a8575;
+      font-size: 10px;
+    }
+  }
+
+  > button:last-child {
+    color: #d46110;
+  }
+}
+
+.chatTripFolderContent {
+  padding: 9px;
+  border-top: 1px solid #f1e7df;
+  background: #faf8f5;
+
+  .chatHistoryItem {
+    border-radius: 12px;
+  }
+}
+
+.chatTripNewButton {
+  border-style: dashed;
+  border-color: #e7b386;
+  border-radius: 11px;
+  color: #a94e0d;
+  background: #fffaf5;
+}
+
+.chatHistoryEmpty {
+  padding: 14px 10px;
+  border: 1px dashed #ddd4cc;
+  border-radius: 12px;
+  color: #9b928b;
+  background: rgba(255, 255, 255, 0.72);
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: center;
+}
+
 .chatHistoryList {
   display: grid;
   gap: 9px;
