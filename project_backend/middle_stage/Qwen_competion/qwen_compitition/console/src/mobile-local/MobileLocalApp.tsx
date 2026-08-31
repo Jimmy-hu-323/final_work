@@ -33,6 +33,7 @@ import {
   EllipsisVertical,
   Glasses,
   Image as ImageIcon,
+  ImagePlus,
   Images,
   KeyRound,
   History,
@@ -59,6 +60,7 @@ import {
   Users,
   Volume2,
   Wifi,
+  X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import {
@@ -80,6 +82,7 @@ import {
   fileToDataUrl,
   generateMobileImage,
   listAlbumItems,
+  listChatMediaItems,
   listMobileModels,
   loadMemory,
   loadMobileSettings,
@@ -89,6 +92,7 @@ import {
   mobileChat,
   locationLabel,
   putAlbumItem,
+  putChatMediaItem,
   saveMemory,
   saveMessages,
   saveMobileSettings,
@@ -99,6 +103,7 @@ import {
   testQwenPaw,
   uploadAlbumItemToCloud,
   type AlbumItem,
+  type ChatMediaItem,
   type LocalMessage,
   type LocalTrip,
   type MobileSettings,
@@ -130,17 +135,33 @@ import HotelBillsPage from "./HotelBillsPage";
 import TripRouteMap from "./TripRouteMap";
 import { streamQwenPawChat } from "./qwenpaw";
 import {
-  CHAT_SESSIONS_KEY, ACTIVE_CHAT_SESSION_KEY, CHAT_SESSIONS_CHANGED,
-  QWENPAW_MODEL_ID, createChatRemoteSessionId, createChatSession,
-  loadChatSessionState, updateChatSessions, type LocalChatSession,
+  CHAT_SESSIONS_KEY,
+  ACTIVE_CHAT_SESSION_KEY,
+  CHAT_SESSIONS_CHANGED,
+  QWENPAW_MODEL_ID,
+  createChatRemoteSessionId,
+  createChatSession,
+  loadChatSessionState,
+  updateChatSessions,
+  type LocalChatSession,
 } from "./chatSessions";
 import {
-  GUIDE_OPEN_EVENT, GUIDE_POSITION_EVENT, GUIDE_ERROR_EVENT,
-  TRIPS_CHANGED_EVENT, GUIDE_OPTIONS, GUIDE_DEPARTURE_EVENT,
+  GUIDE_OPEN_EVENT,
+  GUIDE_POSITION_EVENT,
+  GUIDE_ERROR_EVENT,
+  TRIPS_CHANGED_EVENT,
+  GUIDE_OPTIONS,
+  GUIDE_DEPARTURE_EVENT,
 } from "./tripGuide";
 import { startTripGuideRuntime, replyToTripGuide } from "./tripGuideRuntime";
-import { departureChoices, departureGuidePlaces, fallbackDepartureOrigin, locateDepartureOrigin } from "./tripDeparture";
+import {
+  departureChoices,
+  departureGuidePlaces,
+  fallbackDepartureOrigin,
+  locateDepartureOrigin,
+} from "./tripDeparture";
 import TripDepartureChoices from "./TripDepartureChoices";
+import { deleteTripAndBills } from "./tripDeletion";
 import {
   extractAgentTripProposal,
   proposalFromRemoteItinerary,
@@ -164,6 +185,19 @@ function errorText(error: unknown): string {
 
 const PHOTO_SEARCH_PATTERN =
   /照片|图片|相册|拍过|拍的|影像|找图|发给我|发出来|哪一张|哪张/;
+const POSE_PREVIEW_PATTERN =
+  /(?:生成|制作|做一张|看看|预览).{0,18}(?:姿势|拍照效果|参考图)|(?:姿势|拍照效果|参考图).{0,18}(?:生成|制作|预览)/;
+const CHAT_POSE_DRAFT_KEY = "lensgo_mobile_chat_pose_draft_v1";
+
+function posePreviewPrompt(description: string): string {
+  return `旅行摄影姿势效果预览，${description}。生成一张写实照片，人物全身或大半身构图，动作自然且容易模仿，站位安全，背景清晰，无文字无水印。`;
+}
+
+function sceneCompositePrompt(description: string): string {
+  return `把上传的现场照片作为唯一背景参考。严格保持原照片的建筑、景物、视角、构图、光线和环境不变，不添加、删除或移动任何背景元素。只在画面中安全且适合拍照的位置新增一位写实游客，并让人物完成这个姿势：${
+    description || "自然、轻松、容易模仿的旅行拍照姿势"
+  }。人物比例、透视、阴影和现场光线必须真实协调，不遮挡主要地标，不添加文字或水印。`;
+}
 
 function parseJsonObject(value: string): Record<string, unknown> | null {
   const start = value.indexOf("{");
@@ -708,7 +742,7 @@ function LocalSettingsPage({
           <Form.Item
             name="imageBaseUrl"
             label="图片 API Base URL（可选）"
-            extra="留空则使用上面的文字 API 地址；当前支持 OpenAI-compatible /images/generations。"
+            extra="留空则使用上面的文字 API 地址；自动兼容阿里云 Qwen Image 多模态接口和 OpenAI Images API。"
           >
             <Input placeholder="https://api.example.com/v1" inputMode="url" />
           </Form.Item>
@@ -748,7 +782,6 @@ function LocalSettingsPage({
   );
 }
 
-
 function LocalChatPage({
   settings,
   fallbackConfigured,
@@ -772,12 +805,17 @@ function LocalChatPage({
     initialChatState.sessions,
   );
   const setSessions = (
-    update: LocalChatSession[] | ((current: LocalChatSession[]) => LocalChatSession[]),
+    update:
+      | LocalChatSession[]
+      | ((current: LocalChatSession[]) => LocalChatSession[]),
   ) => {
-    updateChatSessions((current) => typeof update === "function" ? update(current) : update);
+    updateChatSessions((current) =>
+      typeof update === "function" ? update(current) : update,
+    );
   };
   useEffect(() => {
-    const refresh = () => setSessionsState(loadChatSessionState(defaultModel, true).sessions);
+    const refresh = () =>
+      setSessionsState(loadChatSessionState(defaultModel, true).sessions);
     window.addEventListener(CHAT_SESSIONS_CHANGED, refresh);
     refresh();
     return () => window.removeEventListener(CHAT_SESSIONS_CHANGED, refresh);
@@ -785,16 +823,26 @@ function LocalChatPage({
   const [activeSessionId, setActiveSessionId] = useState(
     initialChatState.activeId,
   );
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(() => {
+    const draft = localStorage.getItem(CHAT_POSE_DRAFT_KEY) || "";
+    localStorage.removeItem(CHAT_POSE_DRAFT_KEY);
+    return draft;
+  });
   const [sending, setSending] = useState(false);
   const [agentActivity, setAgentActivity] = useState("");
   const [albumItems, setAlbumItems] = useState<AlbumItem[]>([]);
+  const [chatMediaItems, setChatMediaItems] = useState<ChatMediaItem[]>([]);
+  const [pendingImage, setPendingImage] = useState<{
+    name: string;
+    dataUrl: string;
+  } | null>(null);
   const [apiModels, setApiModels] = useState<string[]>(
     settings?.model ? [settings.model] : [],
   );
   const [modelsLoading, setModelsLoading] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
+  const chatImageInputRef = useRef<HTMLInputElement>(null);
   const activeSession =
     sessions.find((session) => session.id === activeSessionId) || sessions[0];
   const messages = activeSession?.messages || [];
@@ -813,20 +861,21 @@ function LocalChatPage({
     () => new Map(albumItems.map((item) => [item.id, item])),
     [albumItems],
   );
+  const chatMediaById = useMemo(
+    () => new Map(chatMediaItems.map((item) => [item.id, item])),
+    [chatMediaItems],
+  );
 
   const setMessages = (
-    update:
-      | LocalMessage[]
-      | ((current: LocalMessage[]) => LocalMessage[]),
+    update: LocalMessage[] | ((current: LocalMessage[]) => LocalMessage[]),
   ) => {
     setSessions((current) =>
       current.map((session) => {
         if (session.id !== activeSessionId) return session;
         const nextMessages =
           typeof update === "function" ? update(session.messages) : update;
-        const firstQuestion = nextMessages.find(
-          (item) => item.role === "user",
-        )?.content;
+        const firstQuestion = nextMessages.find((item) => item.role === "user")
+          ?.content;
         return {
           ...session,
           title:
@@ -864,7 +913,12 @@ function LocalChatPage({
 
   useEffect(() => {
     void listAlbumItems().then(setAlbumItems);
+    void listChatMediaItems().then(setChatMediaItems);
   }, []);
+
+  useEffect(() => {
+    void listChatMediaItems().then(setChatMediaItems);
+  }, [messages]);
 
   useEffect(() => {
     const open = (event: Event) => {
@@ -877,50 +931,144 @@ function LocalChatPage({
   }, [sending, input]);
 
   const send = async (preset?: string) => {
+    const sourceImage = pendingImage;
     const text = (preset ?? input).trim();
-    if (!text || sending) return;
+    if ((!text && !sourceImage) || sending) return;
+    const visibleText =
+      text || "请保持现场背景不变，生成自然的旅行拍照姿势效果预览。";
+    const imageTask = Boolean(sourceImage) || POSE_PREVIEW_PATTERN.test(text);
     if (activeSession?.guide?.status === "loading") {
       message.info("景点故事正在讲解，请稍候再追问");
       return;
     }
-    if (qwenpawSelected ? !qwenpawConfigured : !fallbackConfigured) {
+    if (
+      imageTask &&
+      (!settings?.imageModel ||
+        !(settings.hasImageApiKey || settings.hasApiKey))
+    ) {
+      message.warning("请先在设置中配置图片模型和图片 API Key");
+      navigate("/local/settings");
+      return;
+    }
+    if (
+      !imageTask &&
+      (qwenpawSelected ? !qwenpawConfigured : !fallbackConfigured)
+    ) {
       message.warning(
         qwenpawSelected ? "请先配置 QwenPaw 服务" : "请先配置模型 API",
       );
       navigate("/local/settings");
       return;
     }
+    let sourceMedia: ChatMediaItem | undefined;
+    if (sourceImage) {
+      sourceMedia = {
+        id: createId("chat-source"),
+        name: sourceImage.name,
+        dataUrl: sourceImage.dataUrl,
+        kind: "source",
+        createdAt: Date.now(),
+      };
+      await putChatMediaItem(sourceMedia);
+      setChatMediaItems((current) => [...current, sourceMedia!]);
+    }
     const userMessage: LocalMessage = {
       id: createId("message"),
       role: "user",
-      content: text,
+      content: visibleText,
       createdAt: Date.now(),
+      chatMediaId: sourceMedia?.id,
+      chatMediaKind: sourceMedia ? "source" : undefined,
     };
     const next = [...messages, userMessage];
     setMessages(next);
     setInput("");
+    setPendingImage(null);
     setSending(true);
     setAgentActivity(
-      qwenpawSelected
+      imageTask
+        ? sourceMedia
+          ? "正在保持现场背景并合成人物姿势…"
+          : "正在生成姿势效果预览…"
+        : qwenpawSelected
         ? "正在连接 QwenPaw 主智能体…"
         : `正在连接 ${selectedModel}…`,
     );
     let guideReplyId: string | undefined;
     try {
+      if (imageTask) {
+        const result = await generateMobileImage(
+          sourceMedia
+            ? sceneCompositePrompt(text)
+            : posePreviewPrompt(visibleText),
+          "1024x1024",
+          sourceMedia?.dataUrl,
+        );
+        const preview: ChatMediaItem = {
+          id: createId("chat-preview"),
+          name: sourceMedia
+            ? `现场拍照效果-${new Date().toLocaleString()}`
+            : `姿势参考图-${new Date().toLocaleString()}`,
+          dataUrl: result.dataUrl,
+          kind: "preview",
+          createdAt: Date.now(),
+          sourceMediaId: sourceMedia?.id,
+        };
+        await putChatMediaItem(preview);
+        setChatMediaItems((current) => [...current, preview]);
+        setMessages((current) => [
+          ...current,
+          {
+            id: createId("message"),
+            role: "assistant",
+            content: sourceMedia
+              ? "这是以你上传的现场照片为背景生成的拍照效果预览。满意后再保存到相册。"
+              : "姿势效果预览已经生成。满意后再保存到相册。",
+            chatMediaId: preview.id,
+            chatMediaKind: "preview",
+            createdAt: Date.now(),
+          },
+        ]);
+        return;
+      }
       if (activeSession?.guide) {
         guideReplyId = createId("message");
         const replyId = guideReplyId;
-        setMessages((current) => [...current, {
-          id: replyId, role: "assistant", content: "", createdAt: Date.now(),
-        }]);
-        const reply = await replyToTripGuide(activeSession, text, (content) =>
-          setMessages((current) => current.map((item) => item.id === replyId ? { ...item, content } : item)),
+        setMessages((current) => [
+          ...current,
+          {
+            id: replyId,
+            role: "assistant",
+            content: "",
+            createdAt: Date.now(),
+          },
+        ]);
+        const reply = await replyToTripGuide(
+          activeSession,
+          text,
+          (content) =>
+            setMessages((current) =>
+              current.map((item) =>
+                item.id === replyId ? { ...item, content } : item,
+              ),
+            ),
           setAgentActivity,
         );
-        setMessages((current) => current.map((item) => item.id === replyId ? { ...item, content: reply } : item));
-        setSessions((current) => current.map((session) => session.id === activeSession.id ? {
-          ...session, guide: { ...session.guide!, status: "ready" },
-        } : session));
+        setMessages((current) =>
+          current.map((item) =>
+            item.id === replyId ? { ...item, content: reply } : item,
+          ),
+        );
+        setSessions((current) =>
+          current.map((session) =>
+            session.id === activeSession.id
+              ? {
+                  ...session,
+                  guide: { ...session.guide!, status: "ready" },
+                }
+              : session,
+          ),
+        );
         return;
       }
       // The legacy direct-model fallback may search the on-device album.
@@ -1167,15 +1315,66 @@ function LocalChatPage({
     } catch (error) {
       if (guideReplyId) {
         const replyId = guideReplyId;
-        setMessages((current) => current.map((item) => item.id === replyId ? {
-          ...item, content: "本次导览请求未完成，请稍后重试。已有聊天和旅程已保留。",
-        } : item));
+        setMessages((current) =>
+          current.map((item) =>
+            item.id === replyId
+              ? {
+                  ...item,
+                  content:
+                    "本次导览请求未完成，请稍后重试。已有聊天和旅程已保留。",
+                }
+              : item,
+          ),
+        );
       }
       message.error(errorText(error));
     } finally {
       setSending(false);
       setAgentActivity("");
     }
+  };
+
+  const selectChatImage = async (files: FileList | null) => {
+    const file = files?.[0];
+    if (!file) return;
+    try {
+      setPendingImage({ name: file.name, dataUrl: await fileToDataUrl(file) });
+      if (!input.trim()) {
+        setInput("请保持现场背景不变，在合适位置加入一位自然摆姿势的游客。");
+      }
+    } catch (error) {
+      message.error(errorText(error));
+    } finally {
+      if (chatImageInputRef.current) chatImageInputRef.current.value = "";
+    }
+  };
+
+  const saveChatPreview = async (item: LocalMessage) => {
+    if (!item.chatMediaId || item.savedAlbumItemId) return;
+    const media = chatMediaById.get(item.chatMediaId);
+    if (!media) {
+      message.error("预览图片已不可用，请重新生成");
+      return;
+    }
+    const albumId = createId("pose");
+    await putAlbumItem({
+      id: albumId,
+      name: media.name,
+      dataUrl: media.dataUrl,
+      source: "pose",
+      createdAt: Date.now(),
+      note: item.content,
+      syncStatus: "local",
+    });
+    setMessages((current) =>
+      current.map((messageItem) =>
+        messageItem.id === item.id
+          ? { ...messageItem, savedAlbumItemId: albumId }
+          : messageItem,
+      ),
+    );
+    setAlbumItems(await listAlbumItems());
+    message.success("效果预览已保存到本地相册");
   };
 
   const newChat = () => {
@@ -1301,6 +1500,7 @@ function LocalChatPage({
               {[
                 "让我们开启一段新的旅程吧！",
                 "能告诉我你有哪些旅行技能吗？",
+                "生成一张大三巴拍照姿势预览图",
               ].map((prompt) => (
                 <button
                   type="button"
@@ -1317,50 +1517,111 @@ function LocalChatPage({
           </div>
         ) : (
           <div className={styles.messages}>
-            {messages.map((item) => (
-              <article
-                key={item.id}
-                className={
-                  item.role === "user"
-                    ? styles.userMessage
-                    : styles.assistantMessage
-                }
-              >
-                <div className={styles.messageAvatar}>
-                  {item.role === "user" ? (
-                    <CircleUserRound size={18} />
-                  ) : (
-                    <Bot size={18} />
-                  )}
-                </div>
-                <div className={styles.messageContent}>
-                  <ReactMarkdown components={activeSession?.guide && item.role === "assistant" ? {
-                    a: ({ node: _node, href, children, ...props }) => {
-                      const match = href?.match(/^#lensgo-guide-([1-6])$/);
-                      return <a {...props} href={href} onClick={match ? (event) => {
-                        event.preventDefault();
-                        void send(GUIDE_OPTIONS[Number(match[1]) - 1]);
-                      } : undefined}>{children}</a>;
-                    },
-                  } : undefined}>{item.content}</ReactMarkdown>
-                  {!!item.albumItemIds?.length && (
-                    <div className={styles.chatPhotoResults}>
-                      {item.albumItemIds
-                        .map((id) => albumById.get(id))
-                        .filter((photo): photo is AlbumItem => Boolean(photo))
-                        .map((photo) => (
-                          <figure key={photo.id}>
-                            <img src={photo.dataUrl} alt={photo.name} />
-                            <figcaption>
-                              {locationLabel(photo.location)}
-                            </figcaption>
-                          </figure>
-                        ))}
-                    </div>
-                  )}
-                </div>
-              </article>
-            ))}
+            {messages.map((item) => {
+              const chatMedia = item.chatMediaId
+                ? chatMediaById.get(item.chatMediaId)
+                : undefined;
+              return (
+                <article
+                  key={item.id}
+                  className={
+                    item.role === "user"
+                      ? styles.userMessage
+                      : styles.assistantMessage
+                  }
+                >
+                  <div className={styles.messageAvatar}>
+                    {item.role === "user" ? (
+                      <CircleUserRound size={18} />
+                    ) : (
+                      <Bot size={18} />
+                    )}
+                  </div>
+                  <div className={styles.messageContent}>
+                    <ReactMarkdown
+                      components={
+                        activeSession?.guide && item.role === "assistant"
+                          ? {
+                              a: ({
+                                node: _node,
+                                href,
+                                children,
+                                ...props
+                              }) => {
+                                const match = href?.match(
+                                  /^#lensgo-guide-([1-6])$/,
+                                );
+                                return (
+                                  <a
+                                    {...props}
+                                    href={href}
+                                    onClick={
+                                      match
+                                        ? (event) => {
+                                            event.preventDefault();
+                                            void send(
+                                              GUIDE_OPTIONS[
+                                                Number(match[1]) - 1
+                                              ],
+                                            );
+                                          }
+                                        : undefined
+                                    }
+                                  >
+                                    {children}
+                                  </a>
+                                );
+                              },
+                            }
+                          : undefined
+                      }
+                    >
+                      {item.content}
+                    </ReactMarkdown>
+                    {chatMedia && (
+                      <div className={styles.chatMediaCard}>
+                        <img src={chatMedia.dataUrl} alt={chatMedia.name} />
+                        {item.chatMediaKind === "preview" && (
+                          <div className={styles.chatMediaActions}>
+                            <span>
+                              {item.savedAlbumItemId
+                                ? "已保存到相册"
+                                : "仅在对话中预览"}
+                            </span>
+                            <Button
+                              size="small"
+                              type={
+                                item.savedAlbumItemId ? "default" : "primary"
+                              }
+                              icon={<Save size={15} />}
+                              disabled={Boolean(item.savedAlbumItemId)}
+                              onClick={() => void saveChatPreview(item)}
+                            >
+                              {item.savedAlbumItemId ? "已保存" : "保存到相册"}
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {!!item.albumItemIds?.length && (
+                      <div className={styles.chatPhotoResults}>
+                        {item.albumItemIds
+                          .map((id) => albumById.get(id))
+                          .filter((photo): photo is AlbumItem => Boolean(photo))
+                          .map((photo) => (
+                            <figure key={photo.id}>
+                              <img src={photo.dataUrl} alt={photo.name} />
+                              <figcaption>
+                                {locationLabel(photo.location)}
+                              </figcaption>
+                            </figure>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
           </div>
         )}
         {sending && (
@@ -1372,12 +1633,35 @@ function LocalChatPage({
       </div>
 
       <div className={styles.chatComposer}>
+        <input
+          ref={chatImageInputRef}
+          hidden
+          type="file"
+          accept="image/*"
+          onChange={(event) => void selectChatImage(event.target.files)}
+        />
+        {pendingImage && (
+          <div className={styles.chatPendingImage}>
+            <img src={pendingImage.dataUrl} alt={pendingImage.name} />
+            <div>
+              <strong>{pendingImage.name}</strong>
+              <span>将保留这张图的背景，合成人物与拍照姿势</span>
+            </div>
+            <Button
+              type="text"
+              shape="circle"
+              icon={<X size={17} />}
+              aria-label="移除图片"
+              onClick={() => setPendingImage(null)}
+            />
+          </div>
+        )}
         <Input.TextArea
           value={input}
           onChange={(event) => setInput(event.target.value)}
           autoSize={{ minRows: 2, maxRows: 5 }}
           maxLength={10000}
-          placeholder="输入消息，询问路线、景点、美食或行程…"
+          placeholder="输入消息，或上传现场照片生成拍照效果…"
           onPressEnter={(event) => {
             if (!event.shiftKey) {
               event.preventDefault();
@@ -1386,13 +1670,24 @@ function LocalChatPage({
           }}
         />
         <div className={styles.chatComposerFooter}>
-          <span>{input.length}/10000</span>
+          <div className={styles.chatComposerTools}>
+            <Button
+              type="text"
+              shape="circle"
+              icon={<ImagePlus size={19} />}
+              disabled={sending}
+              aria-label="上传现场照片"
+              title="上传现场照片"
+              onClick={() => chatImageInputRef.current?.click()}
+            />
+            <span>{input.length}/10000</span>
+          </div>
           <Button
             type="primary"
             shape="circle"
             icon={<Send size={18} />}
             loading={sending}
-            disabled={!input.trim()}
+            disabled={!input.trim() && !pendingImage}
             aria-label="发送消息"
             onClick={() => void send()}
           />
@@ -1464,8 +1759,8 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
   const navigate = useNavigate();
   const [form] = Form.useForm();
   const [trips, setTrips] = useState<LocalTrip[]>(loadTrips);
-  const [generating, setGenerating] = useState(false);
   const [plannerOpen, setPlannerOpen] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [selectedDay, setSelectedDay] = useState<"overview" | number>(
     "overview",
   );
@@ -1477,25 +1772,35 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
   const [crowdError, setCrowdError] = useState("");
   const [positionText, setPositionText] = useState("等待开启行程");
   const [replanning, setReplanning] = useState(false);
+  const [deletingTripId, setDeletingTripId] = useState("");
   const selectedRef = useRef<LocalTrip | null>(selected);
   const crowdPlacesRef = useRef<CrowdPlace[]>(crowdPlaces);
   const lastCrowdFetchRef = useRef(0);
   const departureVersionRef = useRef(0);
   const departureTripRef = useRef("");
   const travelMountedRef = useRef(true);
-  const crowdReminderRef = useRef<ReturnType<typeof Modal.confirm> | null>(null);
+  const crowdReminderRef = useRef<ReturnType<typeof Modal.confirm> | null>(
+    null,
+  );
 
   useEffect(() => {
     travelMountedRef.current = true;
     const refresh = () => {
       const latest = loadTrips();
       setTrips(latest);
-      const current = latest.find((trip) => trip.id === selectedRef.current?.id) || null;
-      if (departureTripRef.current && (current?.id !== departureTripRef.current || current.status !== "active")) {
+      const current =
+        latest.find((trip) => trip.id === selectedRef.current?.id) || null;
+      if (
+        departureTripRef.current &&
+        (current?.id !== departureTripRef.current ||
+          current.status !== "active")
+      ) {
         departureVersionRef.current += 1;
         departureTripRef.current = "";
         crowdReminderRef.current?.destroy();
-        window.dispatchEvent(new CustomEvent(GUIDE_DEPARTURE_EVENT, { detail: false }));
+        window.dispatchEvent(
+          new CustomEvent(GUIDE_DEPARTURE_EVENT, { detail: false }),
+        );
       }
       selectedRef.current = current;
       setSelected(current);
@@ -1505,7 +1810,9 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
       travelMountedRef.current = false;
       departureVersionRef.current += 1;
       crowdReminderRef.current?.destroy();
-      window.dispatchEvent(new CustomEvent(GUIDE_DEPARTURE_EVENT, { detail: false }));
+      window.dispatchEvent(
+        new CustomEvent(GUIDE_DEPARTURE_EVENT, { detail: false }),
+      );
       window.removeEventListener(TRIPS_CHANGED_EVENT, refresh);
     };
   }, []);
@@ -1552,6 +1859,45 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
     setSelected(updated);
     setTrips(next);
     saveTrips(next);
+  };
+
+  const confirmDeleteTrip = (trip: LocalTrip) => {
+    Modal.confirm({
+      title: "删除整个行程？",
+      icon: <Trash2 size={22} color="#d94c42" />,
+      content:
+        "该行程及“账单”栏目中与它关联的全部费用会一起删除，删除后无法恢复。对话记录不会受到影响。",
+      okText: "删除行程和账单",
+      cancelText: "取消",
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        setDeletingTripId(trip.id);
+        try {
+          const { remainingTrips, removedExpenseCount } =
+            await deleteTripAndBills(trip.id);
+          const nextSelected =
+            remainingTrips.find((item) => item.status === "active") ||
+            remainingTrips[0] ||
+            null;
+          setTrips(remainingTrips);
+          setSelected(nextSelected);
+          selectedRef.current = nextSelected;
+          setSelectedDay("overview");
+          if (trip.status === "active") {
+            setPositionText("行程已删除，位置跟踪已停止");
+          }
+          message.success(
+            removedExpenseCount
+              ? `行程已删除，并同步删除 ${removedExpenseCount} 笔账单`
+              : "行程已删除；该行程没有关联账单",
+          );
+        } catch (error) {
+          message.error(`删除失败，行程已保留：${errorText(error)}`);
+        } finally {
+          setDeletingTripId("");
+        }
+      },
+    });
   };
 
   const generate = async () => {
@@ -1647,11 +1993,21 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
     }
   };
 
-  const showDepartureChoices = async (trip: LocalTrip, position: TripPosition) => {
-    if (!travelMountedRef.current || selectedRef.current?.id !== trip.id || selectedRef.current.status !== "active") return;
+  const showDepartureChoices = async (
+    trip: LocalTrip,
+    position: TripPosition,
+  ) => {
+    if (
+      !travelMountedRef.current ||
+      selectedRef.current?.id !== trip.id ||
+      selectedRef.current.status !== "active"
+    )
+      return;
     const version = ++departureVersionRef.current;
     departureTripRef.current = trip.id;
-    window.dispatchEvent(new CustomEvent(GUIDE_DEPARTURE_EVENT, { detail: true }));
+    window.dispatchEvent(
+      new CustomEvent(GUIDE_DEPARTURE_EVENT, { detail: true }),
+    );
     crowdReminderRef.current?.destroy();
     const close = () => {
       if (departureVersionRef.current !== version) return;
@@ -1659,34 +2015,66 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
       departureTripRef.current = "";
       crowdReminderRef.current?.destroy();
       crowdReminderRef.current = null;
-      window.dispatchEvent(new CustomEvent(GUIDE_DEPARTURE_EVENT, { detail: false }));
+      window.dispatchEvent(
+        new CustomEvent(GUIDE_DEPARTURE_EVENT, { detail: false }),
+      );
     };
     crowdReminderRef.current = Modal.confirm({
       title: "接下来想去哪里？",
       icon: <LocateFixed size={22} color="#ff7f16" />,
-      content: <div className={styles.reminderContent}><Spin size="small" /> 正在识别出发地、查询附近景点人流…</div>,
+      content: (
+        <div className={styles.reminderContent}>
+          <Spin size="small" /> 正在识别出发地、查询附近景点人流…
+        </div>
+      ),
       okText: "先自由走走",
       cancelText: "关闭",
       onOk: close,
       onCancel: close,
     });
     const [places, origin] = await Promise.all([
-      refreshCrowd(true), locateDepartureOrigin(position, crowdPlacesRef.current),
+      refreshCrowd(true),
+      locateDepartureOrigin(position, crowdPlacesRef.current),
     ]);
-    if (!travelMountedRef.current || selectedRef.current?.id !== trip.id ||
-        selectedRef.current.status !== "active" || selectedRef.current.startedAt !== trip.startedAt) return;
+    if (
+      !travelMountedRef.current ||
+      selectedRef.current?.id !== trip.id ||
+      selectedRef.current.status !== "active" ||
+      selectedRef.current.startedAt !== trip.startedAt
+    )
+      return;
     const current = selectedRef.current;
-    replaceTrip(trip.id, (latest) => ({ ...latest, guidePlaces: departureGuidePlaces(latest, places) }));
+    replaceTrip(trip.id, (latest) => ({
+      ...latest,
+      guidePlaces: departureGuidePlaces(latest, places),
+    }));
     if (departureVersionRef.current !== version) return;
     const choose = (stop: TripStop) => {
-      if (departureVersionRef.current !== version || selectedRef.current?.status !== "active" || selectedRef.current.id !== trip.id) return;
+      if (
+        departureVersionRef.current !== version ||
+        selectedRef.current?.status !== "active" ||
+        selectedRef.current.id !== trip.id
+      )
+        return;
       replaceTrip(trip.id, (latest) => ({ ...latest, guideDestination: stop }));
       close();
       message.success(`已选择${stop.name}，到达后将自动讲解；你也可以自由走动`);
     };
-    crowdReminderRef.current?.update({ content: <div className={styles.reminderContent}>
-      <TripDepartureChoices origin={origin.available ? origin : fallbackDepartureOrigin(position, places)} choices={departureChoices(current, position, places)} onChoose={choose} />
-    </div> });
+    crowdReminderRef.current?.update({
+      content: (
+        <div className={styles.reminderContent}>
+          <TripDepartureChoices
+            origin={
+              origin.available
+                ? origin
+                : fallbackDepartureOrigin(position, places)
+            }
+            choices={departureChoices(current, position, places)}
+            onChoose={choose}
+          />
+        </div>
+      ),
+    });
   };
 
   const handlePosition = async (tripId: string, position: TripPosition) => {
@@ -1700,7 +2088,10 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
           } · 误差约 ${Math.round(position.accuracy)} 米`
         : `定位正常 · 误差约 ${Math.round(position.accuracy)} 米`,
     );
-    if (!crowdPlacesRef.current.length || Date.now() - lastCrowdFetchRef.current > 2 * 60_000) {
+    if (
+      !crowdPlacesRef.current.length ||
+      Date.now() - lastCrowdFetchRef.current > 2 * 60_000
+    ) {
       await refreshCrowd(true);
     }
   };
@@ -1709,8 +2100,11 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
     if (selected?.status !== "active") return;
     setPositionText("正在获取手机位置…");
     const positionListener = (event: Event) => {
-      const detail = (event as CustomEvent<{ tripId: string; position: TripPosition }>).detail;
-      if (detail.tripId === selected.id) void handlePosition(detail.tripId, detail.position);
+      const detail = (
+        event as CustomEvent<{ tripId: string; position: TripPosition }>
+      ).detail;
+      if (detail.tripId === selected.id)
+        void handlePosition(detail.tripId, detail.position);
     };
     const errorListener = (event: Event) => {
       setPositionText(String((event as CustomEvent<string>).detail));
@@ -1762,34 +2156,40 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
                   },
                 );
               });
-          if (!travelMountedRef.current || selectedRef.current?.id !== selected.id) return;
+          if (
+            !travelMountedRef.current ||
+            selectedRef.current?.id !== selected.id
+          )
+            return;
           // The chooser owns this short pause; GPS continues, but an arrival
           // story must not steal the screen while the visitor is choosing.
-          window.dispatchEvent(new CustomEvent(GUIDE_DEPARTURE_EVENT, { detail: true }));
+          window.dispatchEvent(
+            new CustomEvent(GUIDE_DEPARTURE_EVENT, { detail: true }),
+          );
           const currentIndex = -1;
-            const next = loadTrips().map((trip) => {
-              if (trip.id === selected.id) {
-                return {
-                  ...trip,
-                  stops,
-                  status: "active" as const,
-                  currentStopIndex: currentIndex,
-                  startedAt: Date.now(),
-                  completedAt: undefined,
-                  lastPosition: position,
-                  guideDestination: undefined,
-                  guidePlaces: departureGuidePlaces(trip, crowdPlacesRef.current),
-                };
-              }
-              return trip.status === "active"
-                ? { ...trip, status: "planned" as const }
-                : trip;
-            });
-            const active = next.find((trip) => trip.id === selected.id) || null;
-            setSelected(active);
-            selectedRef.current = active;
-            setTrips(next);
-            saveTrips(next);
+          const next = loadTrips().map((trip) => {
+            if (trip.id === selected.id) {
+              return {
+                ...trip,
+                stops,
+                status: "active" as const,
+                currentStopIndex: currentIndex,
+                startedAt: Date.now(),
+                completedAt: undefined,
+                lastPosition: position,
+                guideDestination: undefined,
+                guidePlaces: departureGuidePlaces(trip, crowdPlacesRef.current),
+              };
+            }
+            return trip.status === "active"
+              ? { ...trip, status: "planned" as const }
+              : trip;
+          });
+          const active = next.find((trip) => trip.id === selected.id) || null;
+          setSelected(active);
+          selectedRef.current = active;
+          setTrips(next);
+          saveTrips(next);
           announceTripUpdate(
             "行程已开始",
             `${selected.title}已开始，请根据当前位置选择想去的地方，也可以自由走动。`,
@@ -1824,8 +2224,11 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
   };
 
   const selectedIndex = selected?.currentStopIndex ?? -1;
-  const nextStop = selected?.guideDestination || (selected?.status === "active"
-    ? { id: "guide-unselected", name: "未选择，可自由走动" } : undefined);
+  const nextStop =
+    selected?.guideDestination ||
+    (selected?.status === "active"
+      ? { id: "guide-unselected", name: "未选择，可自由走动" }
+      : undefined);
   const nextCrowd = nextStop ? crowdSnapshot(nextStop, crowdPlaces) : undefined;
   const dayNumbers = Array.from(
     new Set((selected?.stops || []).map((stop) => stop.day || 1)),
@@ -1867,9 +2270,7 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
         action={
           <Button
             className={`${styles.journeyStartButton} ${
-              selected?.status === "active"
-                ? styles.journeyStopButton
-                : ""
+              selected?.status === "active" ? styles.journeyStopButton : ""
             }`}
             type="primary"
             shape="circle"
@@ -1910,14 +2311,27 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
           <div className={styles.journeySelectorCard}>
             <div className={styles.journeySectionHeading}>
               <span>行程选择</span>
-              <Button
-                type="link"
-                size="small"
-                icon={<Sparkles size={14} />}
-                onClick={() => setPlannerOpen(true)}
-              >
-                规划新行程
-              </Button>
+              <Space size={4}>
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<Sparkles size={14} />}
+                  onClick={() => setPlannerOpen(true)}
+                >
+                  规划新行程
+                </Button>
+                <Button
+                  type="link"
+                  size="small"
+                  danger
+                  icon={<Trash2 size={14} />}
+                  loading={deletingTripId === selected.id}
+                  aria-label={`删除行程${selected.title}`}
+                  onClick={() => confirmDeleteTrip(selected)}
+                >
+                  删除行程
+                </Button>
+              </Space>
             </div>
             <Select
               className={styles.journeyTripSelect}
@@ -1970,9 +2384,7 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
               <button
                 type="button"
                 key={day}
-                className={
-                  selectedDay === day ? styles.journeyScopeActive : ""
-                }
+                className={selectedDay === day ? styles.journeyScopeActive : ""}
                 aria-pressed={selectedDay === day}
                 onClick={() => setSelectedDay(day)}
               >
@@ -2112,7 +2524,10 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
                 )}
               </div>
             ) : (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="该范围暂无路线点" />
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="该范围暂无路线点"
+              />
             )}
             {selected.status === "active" && (
               <Button
@@ -2799,7 +3214,6 @@ function LocalLensGoPage({
   const navigate = useNavigate();
   const [memory, setMemory] = useState(loadMemory);
   const [pose, setPose] = useState("");
-  const [generating, setGenerating] = useState(false);
   const [albumCount, setAlbumCount] = useState(0);
   const trips = useMemo(loadTrips, []);
 
@@ -2807,7 +3221,7 @@ function LocalLensGoPage({
     void listAlbumItems().then((items) => setAlbumCount(items.length));
   }, []);
 
-  const generatePose = async () => {
+  const openPoseChat = () => {
     if (!configured) {
       navigate("/local/settings");
       return;
@@ -2818,26 +3232,11 @@ function LocalLensGoPage({
       return;
     }
     const subject = pose.trim() || "游客在澳门大三巴牌坊前自然站立拍照";
-    setGenerating(true);
-    try {
-      const prompt = `旅行摄影姿势参考图，地点澳门，${subject}。全身构图，动作自然易模仿，真实摄影风格，背景清晰但不喧宾夺主，安全站位，无文字无水印。`;
-      const result = await generateMobileImage(prompt);
-      await putAlbumItem({
-        id: createId("pose"),
-        name: `姿势参考图-${new Date().toLocaleString()}`,
-        dataUrl: result.dataUrl,
-        source: "pose",
-        createdAt: Date.now(),
-        note: pose,
-      });
-      setAlbumCount((value) => value + 1);
-      message.success("姿势参考图已保存到本地相册");
-      navigate("/local/album");
-    } catch (error) {
-      message.error(errorText(error));
-    } finally {
-      setGenerating(false);
-    }
+    localStorage.setItem(
+      CHAT_POSE_DRAFT_KEY,
+      `请生成一张拍照姿势效果预览图：${subject}`,
+    );
+    navigate("/local/chat");
   };
 
   return (
@@ -2896,7 +3295,7 @@ function LocalLensGoPage({
         }
       >
         <Typography.Paragraph type="secondary">
-          描述地点、人物和想要的感觉，参考图会直接生成并保存到手机相册。
+          描述地点、人物和想要的感觉，参考图会先在对话中生成，确认满意后再保存到相册。
         </Typography.Paragraph>
         <Input.TextArea
           value={pose}
@@ -2908,10 +3307,9 @@ function LocalLensGoPage({
           className={styles.blockButton}
           type="primary"
           icon={<Sparkles size={17} />}
-          loading={generating}
-          onClick={() => void generatePose()}
+          onClick={openPoseChat}
         >
-          生成姿势参考图
+          到对话生成姿势预览
         </Button>
       </Card>
       <Card
@@ -2965,14 +3363,18 @@ function LocalAppRoutes({
   const location = useLocation();
   const currentPathRef = useRef(location.pathname);
   currentPathRef.current = location.pathname;
-  useEffect(() => startTripGuideRuntime(settings), [
-    settings?.qwenpawBaseUrl, settings?.qwenpawAgentId,
-  ]);
+  useEffect(
+    () => startTripGuideRuntime(settings),
+    [settings?.qwenpawBaseUrl, settings?.qwenpawAgentId],
+  );
   useEffect(() => {
     const open = (event: Event) => {
       // Arrival never navigates away from the other four sections.
       if (currentPathRef.current !== "/local/travel") return;
-      localStorage.setItem(ACTIVE_CHAT_SESSION_KEY, (event as CustomEvent<string>).detail);
+      localStorage.setItem(
+        ACTIVE_CHAT_SESSION_KEY,
+        (event as CustomEvent<string>).detail,
+      );
       navigate("/local/chat");
     };
     window.addEventListener(GUIDE_OPEN_EVENT, open);

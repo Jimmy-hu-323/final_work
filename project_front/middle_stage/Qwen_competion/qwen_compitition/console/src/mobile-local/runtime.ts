@@ -33,6 +33,18 @@ export type LocalMessage = {
   content: string;
   createdAt: number;
   albumItemIds?: string[];
+  chatMediaId?: string;
+  chatMediaKind?: "source" | "preview";
+  savedAlbumItemId?: string;
+};
+
+export type ChatMediaItem = {
+  id: string;
+  name: string;
+  dataUrl: string;
+  kind: "source" | "preview";
+  createdAt: number;
+  sourceMediaId?: string;
 };
 
 export type TripStop = {
@@ -276,8 +288,9 @@ const MEMORY_KEY = "lensgo_mobile_memory_v1";
 const PRIVACY_KEY = "lensgo_mobile_privacy_v1";
 const DEVICE_KEY = "lensgo_mobile_device_id_v1";
 const DB_NAME = "lensgo-mobile-album";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = "images";
+const CHAT_MEDIA_STORE_NAME = "chatMedia";
 
 function fallbackSettings(): MobileSettings {
   try {
@@ -544,6 +557,14 @@ export async function deleteTripExpense(expenseId: string): Promise<void> {
   await hotelGateway({ operation: "delete_trip_expense", expenseId });
 }
 
+export async function deleteTripExpenses(tripId: string): Promise<number> {
+  const result = await hotelGateway<{ removed?: number }>({
+    operation: "delete_trip_expenses",
+    tripId,
+  });
+  return Number(result.removed || 0);
+}
+
 export type MobilePrivacySettings = {
   shareTripsWithAgent: boolean;
   albumSyncMode: "off" | "selected" | "automatic";
@@ -619,6 +640,7 @@ export async function deleteCloudAlbumItem(fileId: number): Promise<void> {
 export async function generateMobileImage(
   prompt: string,
   size = "1024x1024",
+  sourceDataUrl?: string,
 ): Promise<{ dataUrl: string; revisedPrompt?: string }> {
   if (!isTauri()) {
     throw new Error("请在 Android App 中调用本地图片运行时");
@@ -626,7 +648,7 @@ export async function generateMobileImage(
   return invoke<{ dataUrl: string; revisedPrompt?: string }>(
     "mobile_generate_image",
     {
-      request: { prompt, size },
+      request: { prompt, size, sourceDataUrl },
     },
   );
 }
@@ -719,10 +741,35 @@ function openAlbumDb(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         db.createObjectStore(STORE_NAME, { keyPath: "id" });
       }
+      if (!db.objectStoreNames.contains(CHAT_MEDIA_STORE_NAME)) {
+        db.createObjectStore(CHAT_MEDIA_STORE_NAME, { keyPath: "id" });
+      }
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
+}
+
+export async function listChatMediaItems(): Promise<ChatMediaItem[]> {
+  const db = await openAlbumDb();
+  return new Promise<ChatMediaItem[]>((resolve, reject) => {
+    const request = db
+      .transaction(CHAT_MEDIA_STORE_NAME, "readonly")
+      .objectStore(CHAT_MEDIA_STORE_NAME)
+      .getAll();
+    request.onsuccess = () => resolve(request.result as ChatMediaItem[]);
+    request.onerror = () => reject(request.error);
+  }).finally(() => db.close());
+}
+
+export async function putChatMediaItem(item: ChatMediaItem): Promise<void> {
+  const db = await openAlbumDb();
+  return new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(CHAT_MEDIA_STORE_NAME, "readwrite");
+    transaction.objectStore(CHAT_MEDIA_STORE_NAME).put(item);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  }).finally(() => db.close());
 }
 
 export async function listAlbumItems(): Promise<AlbumItem[]> {

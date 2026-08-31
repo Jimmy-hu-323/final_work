@@ -1,6 +1,7 @@
 import { userIdFrom } from "../../../../lib/hotel-store";
 import {
   createTripExpense,
+  deleteTripExpenses,
   listTripExpenses,
   summarizeExpenses,
 } from "../../../../lib/trip-expenses";
@@ -18,6 +19,8 @@ function failure(error: unknown, requestId: string) {
       ? "费用项需要名称。"
       : message === "EXPENSE_AMOUNT_INVALID"
         ? "金额必须是不小于 0 的整数（单位：分）。"
+        : message === "EXPENSE_TRIP_REQUIRED"
+          ? "请选择需要删除的行程。"
         : message;
   return Response.json(
     { error: { code: message, message: readable }, request_id: requestId },
@@ -73,6 +76,22 @@ export async function POST(request: Request) {
       { created, expenses, summary: summarizeExpenses(expenses), request_id: requestId },
       { status: 201 },
     );
+  } catch (error) {
+    return failure(error, requestId);
+  }
+}
+
+export async function DELETE(request: Request) {
+  const requestId = crypto.randomUUID();
+  try {
+    const tripId = (new URL(request.url).searchParams.get("trip_id") || "").trim();
+    if (!tripId) throw new Error("EXPENSE_TRIP_REQUIRED");
+    const removed = await deleteTripExpenses(userIdFrom(request), tripId);
+    return Response.json({
+      trip_id: tripId,
+      removed,
+      request_id: requestId,
+    });
   } catch (error) {
     return failure(error, requestId);
   }

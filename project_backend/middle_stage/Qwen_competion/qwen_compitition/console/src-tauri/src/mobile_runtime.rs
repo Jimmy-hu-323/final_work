@@ -167,6 +167,7 @@ pub struct CloudPhotoResponse {
 pub struct ImageRequest {
     prompt: String,
     size: Option<String>,
+    source_data_url: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -297,6 +298,59 @@ fn normalize_endpoint(base: &str, suffix: &str) -> Result<String, String> {
     } else {
         Ok(format!("{base}{suffix}"))
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ImageApiProvider {
+    OpenAi,
+    Alibaba,
+}
+
+fn image_api_provider(base: &str, model: &str) -> ImageApiProvider {
+    let host = reqwest::Url::parse(base.trim())
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
+        .unwrap_or_default();
+    let alibaba_host = host == "dashscope.aliyuncs.com"
+        || host.contains("dashscope") && host.ends_with(".aliyuncs.com")
+        || host.ends_with(".maas.aliyuncs.com");
+    if alibaba_host && model.trim().to_ascii_lowercase().starts_with("qwen-image") {
+        ImageApiProvider::Alibaba
+    } else {
+        ImageApiProvider::OpenAi
+    }
+}
+
+fn alibaba_image_endpoint(base: &str) -> Result<String, String> {
+    const PATH: &str = "/api/v1/services/aigc/multimodal-generation/generation";
+    let mut url =
+        reqwest::Url::parse(base.trim()).map_err(|error| format!("图片 API 地址无效：{error}"))?;
+    if url.scheme() != "https" && !(cfg!(debug_assertions) && url.scheme() == "http") {
+        return Err("API 地址必须使用 HTTPS（调试构建允许 HTTP）".to_string());
+    }
+    url.set_path(PATH);
+    url.set_query(None);
+    url.set_fragment(None);
+    Ok(url.to_string())
+}
+
+fn alibaba_image_size(size: &str) -> String {
+    size.replace('x', "*").replace('X', "*")
+}
+
+fn alibaba_image_url(value: &Value) -> Option<&str> {
+    value
+        .pointer("/output/choices")?
+        .as_array()?
+        .iter()
+        .filter_map(|choice| choice.pointer("/message/content").and_then(Value::as_array))
+        .flatten()
+        .find_map(|item| {
+            item.get("image")
+                .or_else(|| item.get("url"))
+                .and_then(Value::as_str)
+                .filter(|url| !url.trim().is_empty())
+        })
 }
 
 fn private_http_base(base: &str) -> bool {
@@ -832,8 +886,10 @@ pub async fn mobile_trip_guide_nearby(
     longitude: f64,
     kind: String,
 ) -> Result<Value, String> {
-    if !latitude.is_finite() || !longitude.is_finite()
-        || !(-90.0..=90.0).contains(&latitude) || !(-180.0..=180.0).contains(&longitude)
+    if !latitude.is_finite()
+        || !longitude.is_finite()
+        || !(-90.0..=90.0).contains(&latitude)
+        || !(-180.0..=180.0).contains(&longitude)
         || !matches!(kind.as_str(), "food" | "photo")
     {
         return Err("附近导览查询参数无效".to_string());
@@ -843,14 +899,20 @@ pub async fn mobile_trip_guide_nearby(
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(10))
         .timeout(std::time::Duration::from_secs(25))
-        .build().map_err(|_| "无法初始化附近导览连接".to_string())?;
+        .build()
+        .map_err(|_| "无法初始化附近导览连接".to_string())?;
     let response = qwenpaw_request(&client, &settings, reqwest::Method::POST, endpoint)
         .json(&json!({ "latitude": latitude, "longitude": longitude, "kind": kind }))
-        .send().await.map_err(|_| "附近地点服务连接失败，请稍后重试".to_string())?;
+        .send()
+        .await
+        .map_err(|_| "附近地点服务连接失败，请稍后重试".to_string())?;
     if !response.status().is_success() {
         return Err("附近地点服务暂不可用，请稍后重试".to_string());
     }
-    response.json::<Value>().await.map_err(|_| "附近地点返回格式无效".to_string())
+    response
+        .json::<Value>()
+        .await
+        .map_err(|_| "附近地点返回格式无效".to_string())
 }
 
 #[tauri::command]
@@ -859,8 +921,10 @@ pub async fn mobile_trip_guide_origin(
     latitude: f64,
     longitude: f64,
 ) -> Result<Value, String> {
-    if !latitude.is_finite() || !longitude.is_finite()
-        || !(-90.0..=90.0).contains(&latitude) || !(-180.0..=180.0).contains(&longitude)
+    if !latitude.is_finite()
+        || !longitude.is_finite()
+        || !(-90.0..=90.0).contains(&latitude)
+        || !(-180.0..=180.0).contains(&longitude)
     {
         return Err("出发地查询参数无效".to_string());
     }
@@ -869,14 +933,20 @@ pub async fn mobile_trip_guide_origin(
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(15))
-        .build().map_err(|_| "无法初始化出发地连接".to_string())?;
+        .build()
+        .map_err(|_| "无法初始化出发地连接".to_string())?;
     let response = qwenpaw_request(&client, &settings, reqwest::Method::POST, endpoint)
         .json(&json!({ "latitude": latitude, "longitude": longitude }))
-        .send().await.map_err(|_| "出发地服务暂不可用".to_string())?;
+        .send()
+        .await
+        .map_err(|_| "出发地服务暂不可用".to_string())?;
     if !response.status().is_success() {
         return Err("出发地服务暂不可用".to_string());
     }
-    response.json::<Value>().await.map_err(|_| "出发地返回格式无效".to_string())
+    response
+        .json::<Value>()
+        .await
+        .map_err(|_| "出发地返回格式无效".to_string())
 }
 
 #[tauri::command]
@@ -978,6 +1048,11 @@ pub async fn mobile_hotel_gateway(
         "delete_trip_expense" if safe_id(expense_id) => (
             reqwest::Method::DELETE,
             format!("/api/travel-planner/trip-expenses/{expense_id}"),
+            None,
+        ),
+        "delete_trip_expenses" if safe_id(trip_id) => (
+            reqwest::Method::DELETE,
+            format!("/api/travel-planner/trip-expenses?trip_id={trip_id}"),
             None,
         ),
         _ => return Err("不支持的账单操作".to_string()),
@@ -1294,17 +1369,96 @@ pub async fn mobile_generate_image(
     if settings.image_model.trim().is_empty() {
         return Err("请先在“设置”中填写图片模型名称".to_string());
     }
-    let endpoint = normalize_endpoint(base, "/images/generations")?;
-    let response = reqwest::Client::new()
-        .post(endpoint)
-        .bearer_auth(key.trim())
-        .json(&json!({
-            "model": settings.image_model,
-            "prompt": request.prompt,
-            "n": 1,
-            "size": request.size.unwrap_or_else(|| "1024x1024".to_string()),
-            "response_format": "b64_json"
-        }))
+    let model = settings.image_model.trim();
+    let source_data_url = request
+        .source_data_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(source) = source_data_url {
+        if !source.starts_with("data:image/") {
+            return Err("现场参考图必须是图片 data URL".to_string());
+        }
+        if source.len() > 28 * 1024 * 1024 {
+            return Err("现场参考图超过 20 MB 安全上限".to_string());
+        }
+    }
+    let size = request.size.unwrap_or_else(|| "1024x1024".to_string());
+    let provider = image_api_provider(base, model);
+    let client = reqwest::Client::new();
+    let image_request = match provider {
+        ImageApiProvider::Alibaba => {
+            let mut content = Vec::new();
+            if let Some(source) = source_data_url {
+                content.push(json!({"image": source}));
+            }
+            content.push(json!({"text": request.prompt}));
+            client
+                .post(alibaba_image_endpoint(base)?)
+                .bearer_auth(key.trim())
+                .json(&json!({
+                    "model": model,
+                    "input": {
+                        "messages": [{
+                            "role": "user",
+                            "content": content
+                        }]
+                    },
+                    "parameters": {
+                        "n": 1,
+                        "size": alibaba_image_size(&size)
+                    }
+                }))
+        }
+        ImageApiProvider::OpenAi => {
+            let endpoint_suffix = if source_data_url.is_some() {
+                "/images/edits"
+            } else {
+                "/images/generations"
+            };
+            let endpoint = normalize_endpoint(base, endpoint_suffix)?;
+            if let Some(source) = source_data_url {
+                if model.to_ascii_lowercase().starts_with("dall-e-3") {
+                    return Err("DALL·E 3 不支持现场图编辑，请改用 GPT Image 模型".to_string());
+                }
+                let (media_type, bytes) = decode_image_data_url(source)?;
+                let extension = match media_type.as_str() {
+                    "image/jpeg" => "jpg",
+                    "image/webp" => "webp",
+                    _ => "png",
+                };
+                let part = reqwest::multipart::Part::bytes(bytes)
+                    .file_name(format!("lensgo-source.{extension}"))
+                    .mime_str(&media_type)
+                    .map_err(|error| format!("现场参考图格式无效：{error}"))?;
+                let mut form = reqwest::multipart::Form::new()
+                    .text("model", model.to_string())
+                    .text("prompt", request.prompt)
+                    .text("n", "1")
+                    .text("size", size)
+                    .part("image", part);
+                if !model.to_ascii_lowercase().starts_with("gpt-image") {
+                    form = form.text("response_format", "b64_json");
+                }
+                client
+                    .post(endpoint)
+                    .bearer_auth(key.trim())
+                    .multipart(form)
+            } else {
+                let mut body = json!({
+                    "model": model,
+                    "prompt": request.prompt,
+                    "n": 1,
+                    "size": size
+                });
+                if !model.to_ascii_lowercase().starts_with("gpt-image") {
+                    body["response_format"] = Value::String("b64_json".to_string());
+                }
+                client.post(endpoint).bearer_auth(key.trim()).json(&body)
+            }
+        }
+    };
+    let response = image_request
         .send()
         .await
         .map_err(|error| format!("无法连接图片服务：{error}"))?;
@@ -1315,23 +1469,35 @@ pub async fn mobile_generate_image(
         .json()
         .await
         .map_err(|error| format!("图片响应不是有效 JSON：{error}"))?;
-    let first = value
-        .pointer("/data/0")
-        .ok_or_else(|| "图片服务没有返回图片".to_string())?;
-    let revised_prompt = first
-        .get("revised_prompt")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    if let Some(encoded) = first.get("b64_json").and_then(Value::as_str) {
-        return Ok(ImageResponse {
-            data_url: format!("data:image/png;base64,{encoded}"),
-            revised_prompt,
-        });
-    }
-    let url = first
-        .get("url")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "图片响应缺少 b64_json 或 url".to_string())?;
+    let (url, revised_prompt) = match provider {
+        ImageApiProvider::Alibaba => (
+            alibaba_image_url(&value)
+                .ok_or_else(|| "阿里云图片响应中没有 image URL".to_string())?,
+            None,
+        ),
+        ImageApiProvider::OpenAi => {
+            let first = value
+                .pointer("/data/0")
+                .ok_or_else(|| "图片服务没有返回图片".to_string())?;
+            let revised_prompt = first
+                .get("revised_prompt")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            if let Some(encoded) = first.get("b64_json").and_then(Value::as_str) {
+                return Ok(ImageResponse {
+                    data_url: format!("data:image/png;base64,{encoded}"),
+                    revised_prompt,
+                });
+            }
+            (
+                first
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "图片响应缺少 b64_json 或 url".to_string())?,
+                revised_prompt,
+            )
+        }
+    };
     let image_response = reqwest::Client::new()
         .get(url)
         .send()

@@ -340,6 +340,16 @@ export async function deleteTripExpense(userId: string, expenseId: string) {
   return Boolean(result.meta?.changes);
 }
 
+/** Remove every bill line belonging to one trip in a single database write. */
+export async function deleteTripExpenses(userId: string, tripId: string) {
+  await ensureExpenseData();
+  const result = await db()
+    .prepare("DELETE FROM trip_expenses WHERE user_id = ? AND trip_id = ?")
+    .bind(userId, tripId)
+    .run();
+  return Number(result.meta?.changes || 0);
+}
+
 /** Totals the 账单 page shows above the line items. */
 export function summarizeExpenses(expenses: TripExpense[]) {
   const byCategory: Record<string, number> = {};

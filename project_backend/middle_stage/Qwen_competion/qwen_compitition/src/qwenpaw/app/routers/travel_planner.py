@@ -477,6 +477,18 @@ async def create_trip_expenses(payload: dict = Body(...)) -> dict:
     return await _hotel_service_call("POST", "/api/v1/trip-expenses", payload=payload)
 
 
+@router.delete("/trip-expenses")
+async def delete_trip_expenses(trip_id: str = Query(...)) -> dict:
+    """Remove all bill lines associated with one deleted itinerary."""
+    normalized = trip_id.strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="请选择需要删除的行程。")
+    return await _hotel_service_call(
+        "DELETE",
+        f"/api/v1/trip-expenses?trip_id={quote(normalized, safe='')}",
+    )
+
+
 @router.patch("/trip-expenses/{expense_id}")
 async def update_trip_expense(expense_id: str, payload: dict = Body(...)) -> dict:
     """Edit a line item. Only the keys the caller sends are changed."""

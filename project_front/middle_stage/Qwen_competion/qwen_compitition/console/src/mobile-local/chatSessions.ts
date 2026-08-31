@@ -29,7 +29,8 @@ function cleanChatMessages(messages: LocalMessage[]): LocalMessage[] {
       (item) =>
         item.role === "user" ||
         Boolean(item.content.trim()) ||
-        Boolean(item.albumItemIds?.length),
+        Boolean(item.albumItemIds?.length) ||
+        Boolean(item.chatMediaId),
     );
 }
 
@@ -45,9 +46,8 @@ export function createChatSession(
 ): LocalChatSession {
   const now = Date.now();
   const cleanMessages = cleanChatMessages(messages);
-  const firstQuestion = cleanMessages.find(
-    (item) => item.role === "user",
-  )?.content;
+  const firstQuestion = cleanMessages.find((item) => item.role === "user")
+    ?.content;
   return {
     id: createId("chat"),
     title: firstQuestion?.trim().slice(0, 24) || "新对话",
@@ -61,7 +61,10 @@ export function createChatSession(
   };
 }
 
-export function loadChatSessionState(defaultModel: string, preservePending = false): {
+export function loadChatSessionState(
+  defaultModel: string,
+  preservePending = false,
+): {
   sessions: LocalChatSession[];
   activeId: string;
 } {
@@ -79,7 +82,9 @@ export function loadChatSessionState(defaultModel: string, preservePending = fal
           )
           .map((item) => ({
             ...item,
-            messages: preservePending ? item.messages : cleanChatMessages(item.messages),
+            messages: preservePending
+              ? item.messages
+              : cleanChatMessages(item.messages),
           }))
       : [];
     if (sessions.length) {
@@ -97,7 +102,6 @@ export function loadChatSessionState(defaultModel: string, preservePending = fal
   const session = createChatSession(defaultModel, loadMessages());
   return { sessions: [session], activeId: session.id };
 }
-
 
 export const CHAT_SESSIONS_CHANGED = "lensgo-chat-sessions-changed";
 

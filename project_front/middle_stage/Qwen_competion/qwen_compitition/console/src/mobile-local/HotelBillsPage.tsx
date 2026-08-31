@@ -36,6 +36,7 @@ import {
   type TripExpenseInput,
   type TripExpenseSummary,
 } from "./runtime";
+import { TRIPS_CHANGED_EVENT } from "./tripGuide";
 import styles from "./mobileLocal.module.less";
 
 const CATEGORY_OPTIONS: Array<{
@@ -106,6 +107,20 @@ export default function HotelBillsPage() {
     () => trips.find((trip) => trip.id === selectedTripId),
     [selectedTripId, trips],
   );
+
+  useEffect(() => {
+    const syncTrips = () => {
+      const nextTrips = loadTrips();
+      setTrips(nextTrips);
+      setSelectedTripId((current) =>
+        nextTrips.some((trip) => trip.id === current)
+          ? current
+          : preferredTrip(nextTrips)?.id || "",
+      );
+    };
+    window.addEventListener(TRIPS_CHANGED_EVENT, syncTrips);
+    return () => window.removeEventListener(TRIPS_CHANGED_EVENT, syncTrips);
+  }, []);
 
   const refreshExpenses = useCallback(async (tripId: string) => {
     if (!tripId) {

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import HotelBillsPage from "./HotelBillsPage";
 
@@ -7,25 +7,27 @@ const expenseApi = vi.hoisted(() => ({
   deleteTripExpense: vi.fn(),
   listTripExpenses: vi.fn(),
   updateTripExpense: vi.fn(),
+  trips: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock("./runtime", () => ({
   ...expenseApi,
-  loadTrips: () => [
-    {
-      id: "trip-macau-weekend",
-      title: "澳门周末行程",
-      request: "澳门两日游",
-      content: "",
-      createdAt: 1,
-      status: "active",
-    },
-  ],
+  loadTrips: () => expenseApi.trips,
 }));
 
 describe("HotelBillsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    expenseApi.trips = [
+      {
+        id: "trip-macau-weekend",
+        title: "澳门周末行程",
+        request: "澳门两日游",
+        content: "",
+        createdAt: 1,
+        status: "active",
+      },
+    ];
     expenseApi.listTripExpenses.mockResolvedValue({
       expenses: [
         {
@@ -95,5 +97,17 @@ describe("HotelBillsPage", () => {
     expect(expenseApi.listTripExpenses).toHaveBeenCalledWith(
       "trip-macau-weekend",
     );
+  });
+
+  it("行程删除后立即清空对应账单选择", async () => {
+    render(<HotelBillsPage />);
+    await screen.findByText("澳门周末行程 · 共 2 项费用");
+
+    expenseApi.trips = [];
+    act(() => window.dispatchEvent(new Event("lensgo-trips-changed")));
+
+    expect(
+      await screen.findByText("还没有可选择的行程；请先在“旅程”栏目保存行程"),
+    ).toBeTruthy();
   });
 });
