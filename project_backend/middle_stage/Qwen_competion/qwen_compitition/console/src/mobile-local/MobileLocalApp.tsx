@@ -43,7 +43,9 @@ import {
   MessageCircle,
   MessageSquarePlus,
   Navigation,
+  Pencil,
   Play,
+  Plus,
   RefreshCw,
   ReceiptText,
   Save,
@@ -75,8 +77,10 @@ import {
   albumSearchDocument,
   analyzeAlbumImage,
   createId,
+  createTripExpense,
   deleteAlbumItem,
   deleteCloudAlbumItem,
+  deleteTripExpenses,
   extractPhotoMetadata,
   fetchQwenPawLatestItinerary,
   fileToDataUrl,
@@ -131,6 +135,7 @@ import {
   type CrowdServiceConfig,
 } from "./tripJourney";
 import AlbumMap from "./AlbumMap";
+import { retryAlbumAnalysis } from "./albumAnalysisRetry";
 import HotelBillsPage from "./HotelBillsPage";
 import TripRouteMap from "./TripRouteMap";
 import { streamQwenPawChat } from "./qwenpaw";
@@ -162,6 +167,10 @@ import {
 } from "./tripDeparture";
 import TripDepartureChoices from "./TripDepartureChoices";
 import { deleteTripAndBills } from "./tripDeletion";
+import {
+  buildEditedTripMarkdown,
+  syncTripExpensesForStops,
+} from "./tripEditing";
 import {
   extractAgentTripProposal,
   proposalFromRemoteItinerary,
@@ -1166,7 +1175,7 @@ function LocalChatPage({
           trips: sharedTrips,
           cloudAlbum,
           instruction:
-            "只能使用本上下文中的旅程和 cloudAlbum；不得声称能看到未同步的本地照片。需要规划或修改路线时使用已配置的澳门旅行 Skill、MCP 和子 Agent。用户确认最终规划后，必须按 Skill 的 LensGo 手机端桥接协议，在回复末尾输出包含完整 stops 和高德坐标的 lensgo-trip-update 代码块。",
+            "只能使用本上下文中的旅程和 cloudAlbum；不得声称能看到未同步的本地照片。需要规划或修改路线时使用已配置的澳门旅行 Skill、MCP 和子 Agent。用户确认最终规划后，必须按 Skill 的 LensGo 手机端桥接协议，在回复末尾输出包含完整 stops、高德坐标和逐项 expenses 预算的 lensgo-trip-update 代码块。",
         });
         const assistantId = createId("message");
         setMessages((current) => [
@@ -1241,30 +1250,44 @@ function LocalChatPage({
               : "确认保存这份新行程？",
             content: `QwenPaw 建议写入 ${
               proposal.stops?.length || 0
-            } 个景点。只有确认后才会修改手机本地旅程；取消则完全保留原行程。`,
+            } 个景点和 ${
+              proposal.expenses.length
+            } 笔预算。只有确认后才会修改手机本地旅程和关联账单；取消则完全保留原内容。`,
             okText: target ? "确认更新" : "保存新行程",
             cancelText: "保留原行程",
-            onOk: () => {
+            onOk: async () => {
               const now = Date.now();
               const latest = loadTrips();
-              if (target) {
-                saveTrips(
-                  latest.map((trip) =>
-                    trip.id === proposal.tripId
-                      ? {
-                          ...trip,
-                          title: proposal.title || trip.title,
-                          content: proposal.content,
-                          stops: proposal.stops,
-                          updatedAt: now,
-                          syncStatus: "local",
-                          cloudUpdatedAt: proposal.sourceUpdatedAt,
-                        }
-                      : trip,
-                  ),
-                );
-                message.success("QwenPaw 的修改已保存到本地旅程");
-              } else {
+              try {
+                if (target) {
+                  const syncedExpenseCount = await syncTripExpensesForStops(
+                    target.id,
+                    target.stops || [],
+                    proposal.stops || [],
+                  );
+                  saveTrips(
+                    latest.map((trip) =>
+                      trip.id === proposal.tripId
+                        ? {
+                            ...trip,
+                            title: proposal.title || trip.title,
+                            content: proposal.content,
+                            stops: proposal.stops,
+                            updatedAt: now,
+                            syncStatus: "local",
+                            cloudUpdatedAt: proposal.sourceUpdatedAt,
+                          }
+                        : trip,
+                    ),
+                  );
+                  message.success(
+                    syncedExpenseCount
+                      ? `QwenPaw 的修改已保存，并同步更新 ${syncedExpenseCount} 笔账单`
+                      : "QwenPaw 的修改已保存到本地旅程",
+                  );
+                  return;
+                }
+
                 const created: LocalTrip = {
                   id:
                     proposal.tripId === "new"
@@ -1280,8 +1303,23 @@ function LocalChatPage({
                   syncStatus: "local",
                   cloudUpdatedAt: proposal.sourceUpdatedAt,
                 };
-                saveTrips([created, ...latest].slice(0, 30));
-                message.success("QwenPaw 行程已保存到本地旅程");
+                try {
+                  for (const expense of proposal.expenses) {
+                    await createTripExpense(created.id, expense);
+                  }
+                  saveTrips([created, ...latest].slice(0, 30));
+                } catch (error) {
+                  await deleteTripExpenses(created.id).catch(() => 0);
+                  throw error;
+                }
+                message.success(
+                  proposal.expenses.length
+                    ? `QwenPaw 行程已保存，并写入 ${proposal.expenses.length} 笔预算`
+                    : "QwenPaw 行程已保存；本次方案没有可写入的预算明细",
+                );
+              } catch (error) {
+                message.error(`保存失败，原内容已保留：${errorText(error)}`);
+                throw error;
               }
             },
           });
@@ -1773,6 +1811,16 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
   const [positionText, setPositionText] = useState("等待开启行程");
   const [replanning, setReplanning] = useState(false);
   const [deletingTripId, setDeletingTripId] = useState("");
+  const [tripEditorOpen, setTripEditorOpen] = useState(false);
+  const [tripEditScope, setTripEditScope] = useState<"overview" | number>(
+    "overview",
+  );
+  const [tripEditTitle, setTripEditTitle] = useState("");
+  const [tripEditStops, setTripEditStops] = useState<TripStop[]>([]);
+  const [tripEditScopeStopIds, setTripEditScopeStopIds] = useState<string[]>(
+    [],
+  );
+  const [savingTripEdit, setSavingTripEdit] = useState(false);
   const selectedRef = useRef<LocalTrip | null>(selected);
   const crowdPlacesRef = useRef<CrowdPlace[]>(crowdPlaces);
   const lastCrowdFetchRef = useRef(0);
@@ -1898,6 +1946,143 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
         }
       },
     });
+  };
+
+  const openTripEditor = () => {
+    const trip = selectedRef.current;
+    if (!trip) return;
+    setTripEditScope(selectedDay);
+    setTripEditTitle(trip.title);
+    setTripEditStops((trip.stops || []).map((stop) => ({ ...stop })));
+    setTripEditScopeStopIds(
+      (trip.stops || [])
+        .filter(
+          (stop) =>
+            selectedDay === "overview" || (stop.day || 1) === selectedDay,
+        )
+        .map((stop) => stop.id),
+    );
+    setTripEditorOpen(true);
+  };
+
+  const updateTripEditStop = (index: number, patch: Partial<TripStop>) => {
+    setTripEditStops((current) =>
+      current.map((stop, stopIndex) =>
+        stopIndex === index ? { ...stop, ...patch } : stop,
+      ),
+    );
+  };
+
+  const addTripEditStop = () => {
+    const defaultDay =
+      typeof tripEditScope === "number"
+        ? tripEditScope
+        : Math.max(1, ...tripEditStops.map((stop) => stop.day || 1));
+    const id = createId("stop");
+    setTripEditStops((current) => [
+      ...current,
+      {
+        id,
+        name: "",
+        day: defaultDay,
+        time: "",
+        note: "",
+      },
+    ]);
+    setTripEditScopeStopIds((current) => [...current, id]);
+  };
+
+  const saveTripEdit = async () => {
+    const trip = selectedRef.current;
+    if (!trip) return;
+    const title = tripEditTitle.trim();
+    if (!title) {
+      message.warning("请输入行程名称");
+      return;
+    }
+    if (!tripEditStops.length) {
+      message.warning("请至少保留一个路线点");
+      return;
+    }
+    if (tripEditStops.some((stop) => !stop.name.trim())) {
+      message.warning("请填写所有路线点的名称");
+      return;
+    }
+
+    const previousById = new Map(
+      (trip.stops || []).map((stop) => [stop.id, stop]),
+    );
+    const normalizeName = (value: string) =>
+      value.trim().replace(/\s+/g, " ").toLocaleLowerCase("zh-CN");
+    const nextStops = tripEditStops.map((stop) => {
+      const name = stop.name.trim();
+      const day = Math.max(1, Math.round(Number(stop.day) || 1));
+      const previous = previousById.get(stop.id);
+      const nameChanged =
+        previous && normalizeName(previous.name) !== normalizeName(name);
+      if (!nameChanged) {
+        return {
+          ...stop,
+          name,
+          day,
+          time: stop.time?.trim() || undefined,
+          note: stop.note?.trim() || undefined,
+        };
+      }
+
+      const matchedPlace = crowdPlacesRef.current.find((place) =>
+        [place.name, ...place.aliases].some(
+          (candidate) => normalizeName(candidate) === normalizeName(name),
+        ),
+      );
+      return {
+        ...stop,
+        name,
+        day,
+        time: stop.time?.trim() || undefined,
+        note: stop.note?.trim() || undefined,
+        crowdRegionId: matchedPlace?.region_id || stop.crowdRegionId,
+        longitude: matchedPlace?.center?.[0] ?? stop.longitude,
+        latitude: matchedPlace?.center?.[1] ?? stop.latitude,
+        radiusM: matchedPlace?.radius_m || stop.radiusM,
+      };
+    });
+
+    setSavingTripEdit(true);
+    try {
+      const syncedExpenseCount = await syncTripExpensesForStops(
+        trip.id,
+        trip.stops || [],
+        nextStops,
+      );
+      replaceTrip(trip.id, (current) => {
+        const stopById = new Map(nextStops.map((stop) => [stop.id, stop]));
+        return {
+          ...current,
+          title,
+          stops: nextStops,
+          guidePlaces: current.guidePlaces?.map(
+            (stop) => stopById.get(stop.id) || stop,
+          ),
+          guideDestination: current.guideDestination
+            ? stopById.get(current.guideDestination.id) ||
+              current.guideDestination
+            : undefined,
+          content: buildEditedTripMarkdown(title, nextStops),
+          updatedAt: Date.now(),
+        };
+      });
+      setTripEditorOpen(false);
+      message.success(
+        syncedExpenseCount
+          ? `行程已修改，并同步更新 ${syncedExpenseCount} 笔账单`
+          : "行程已修改；没有需要同步的关联账单",
+      );
+    } catch (error) {
+      message.error(`修改失败，原行程已保留：${errorText(error)}`);
+    } finally {
+      setSavingTripEdit(false);
+    }
   };
 
   const generate = async () => {
@@ -2466,7 +2651,16 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
                     : `第 ${selectedDay} 天行程`}
                 </strong>
               </div>
-              <span>{visibleStopEntries.length} 站</span>
+              <div className={styles.journeyDetailsActions}>
+                <span>{visibleStopEntries.length} 站</span>
+                <Button
+                  size="small"
+                  icon={<Pencil size={13} />}
+                  onClick={openTripEditor}
+                >
+                  修改
+                </Button>
+              </div>
             </div>
             {visibleStopEntries.length ? (
               <div className={styles.journeyRouteList}>
@@ -2562,6 +2756,105 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
           </Button>
         </div>
       )}
+
+      <Modal
+        className={styles.journeyEditModal}
+        title={
+          tripEditScope === "overview"
+            ? "修改完整安排"
+            : `修改第 ${tripEditScope} 天安排`
+        }
+        open={tripEditorOpen}
+        okText="保存并同步账单"
+        cancelText="取消"
+        confirmLoading={savingTripEdit}
+        width={620}
+        onOk={() => void saveTripEdit()}
+        onCancel={() => !savingTripEdit && setTripEditorOpen(false)}
+      >
+        <div className={styles.journeyEditIntro}>
+          完整安排与当日安排使用同一份路线；修改地点或天数后，匹配的账单也会同步更新。
+        </div>
+        {tripEditScope === "overview" && (
+          <label className={styles.journeyEditField}>
+            <span>行程名称</span>
+            <Input
+              value={tripEditTitle}
+              maxLength={80}
+              onChange={(event) => setTripEditTitle(event.target.value)}
+            />
+          </label>
+        )}
+        <div className={styles.journeyEditList}>
+          {tripEditStops.map((stop, index) =>
+            tripEditScope === "overview" ||
+            tripEditScopeStopIds.includes(stop.id) ? (
+              <div className={styles.journeyEditStop} key={stop.id}>
+                <div className={styles.journeyEditStopHeader}>
+                  <strong>路线点 {index + 1}</strong>
+                  <Tag>第 {stop.day || 1} 天</Tag>
+                </div>
+                <label className={styles.journeyEditField}>
+                  <span>地点名称</span>
+                  <Input
+                    value={stop.name}
+                    maxLength={80}
+                    placeholder="例如：大三巴牌坊"
+                    onChange={(event) =>
+                      updateTripEditStop(index, { name: event.target.value })
+                    }
+                  />
+                </label>
+                <div className={styles.journeyEditGrid}>
+                  <label className={styles.journeyEditField}>
+                    <span>第几天</span>
+                    <InputNumber
+                      min={1}
+                      max={30}
+                      precision={0}
+                      value={stop.day || 1}
+                      onChange={(value) =>
+                        updateTripEditStop(index, { day: Number(value) || 1 })
+                      }
+                    />
+                  </label>
+                  <label className={styles.journeyEditField}>
+                    <span>时间</span>
+                    <Input
+                      value={stop.time || ""}
+                      maxLength={30}
+                      placeholder="例如：09:30"
+                      onChange={(event) =>
+                        updateTripEditStop(index, { time: event.target.value })
+                      }
+                    />
+                  </label>
+                </div>
+                <label className={styles.journeyEditField}>
+                  <span>安排说明</span>
+                  <Input.TextArea
+                    value={stop.note || ""}
+                    maxLength={300}
+                    autoSize={{ minRows: 2, maxRows: 5 }}
+                    placeholder="交通、停留时间或注意事项"
+                    onChange={(event) =>
+                      updateTripEditStop(index, { note: event.target.value })
+                    }
+                  />
+                </label>
+              </div>
+            ) : null,
+          )}
+        </div>
+        <Button
+          className={styles.journeyEditAddButton}
+          block
+          icon={<Plus size={15} />}
+          onClick={addTripEditStop}
+        >
+          添加路线点
+        </Button>
+      </Modal>
 
       <Modal
         title="规划新行程"
@@ -2727,7 +3020,9 @@ function LocalAlbumPage({ configured }: { configured: boolean }) {
     await putAlbumItem(analyzing);
     await refresh();
     try {
-      const analysis = await analyzeAlbumImage(analyzing);
+      const analysis = await retryAlbumAnalysis(() =>
+        analyzeAlbumImage(analyzing),
+      );
       const completed = mergeAlbumAnalysis(analyzing, analysis);
       await putAlbumItem(completed);
       return completed;

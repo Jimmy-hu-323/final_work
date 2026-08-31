@@ -37,10 +37,11 @@ version: 1.1
 3. 仍然先在普通回复中解释建议和变更原因。需要写回手机“旅程”时，在回复末尾额外输出且只输出一个如下代码块；手机会再次弹窗让用户确认，不能声称已经写入：
 
     ```lensgo-trip-update
-    {"tripId":"现有旅程 id；新建时填 new","title":"行程标题","markdown":"完整 Markdown 行程","stops":[{"id":"stop-1","name":"景点名","day":1,"time":"09:00","note":"交通或提醒","crowdRegionId":"可选客流区域 id","longitude":113.5,"latitude":22.2}]}
+    {"tripId":"现有旅程 id；新建时填 new","title":"行程标题","markdown":"完整 Markdown 行程","stops":[{"id":"stop-1","name":"景点名","day":1,"time":"09:00","note":"交通或提醒","crowdRegionId":"可选客流区域 id","longitude":113.5,"latitude":22.2}],"expenses":[{"title":"费用名称","category":"hotel|ticket|transport|meal|other","placeName":"关联景点名；无则留空","day":1,"amountYuan":88.5,"quantity":1,"required":true,"note":"这是预算估算，实际价格请核实"}]}
     ```
 
 4. `stops` 必须按照实际游览顺序给出，并包含高德工具确认过的经纬度，保证手机路线图可恢复。修改现有旅程时，必须给出修改后的完整 `markdown` 和完整 `stops`，不能只给增量。
+   如果普通回复或 `markdown` 中出现任何预算、票价、交通费、住宿费或餐饮费，必须同时输出逐项 `expenses`，不能只写预算总数。`amountYuan` 使用人民币元，不是分，并表示单价；多人或多张票使用 `quantity`。范围预算使用较高值，避免低估。费用必须与 `markdown` 一致，不得把合计行再次写成一笔费用；能对应景点时填写与 `stops[].name` 完全一致的 `placeName`，这样手机修改景点时可以同步账单。
 5. 如果用户只是询问、比较或尚未确认修改意图，不要输出 `lensgo-trip-update` 代码块。
 6. 当用户询问下一站人数、实时人流，或要求按当前人流调整剩余行程时，优先调用
    `lensgo-crowd__lensgo_place_crowd` 或 `lensgo-crowd__lensgo_latest_crowd`。

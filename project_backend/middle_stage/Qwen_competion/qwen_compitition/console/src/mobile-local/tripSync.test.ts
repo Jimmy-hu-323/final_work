@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  budgetExpensesFromMarkdown,
   extractAgentTripProposal,
   proposalFromRemoteItinerary,
   stripAgentControlContent,
@@ -19,6 +20,52 @@ describe("trip sync", () => {
     });
   });
 
+  it("parses structured planning expenses into bill inputs", () => {
+    const proposal = extractAgentTripProposal(`\`\`\`lensgo-trip-update
+{"tripId":"new","title":"澳门一日游","markdown":"# 澳门一日游","stops":[{"id":"s1","name":"大三巴","day":1}],"expenses":[{"title":"大三巴门票","category":"ticket","placeName":"大三巴","day":1,"amountYuan":88.5,"quantity":2,"required":true}]}
+\`\`\``);
+
+    expect(proposal?.expenses).toEqual([
+      expect.objectContaining({
+        title: "大三巴门票",
+        category: "ticket",
+        placeName: "大三巴",
+        day: 1,
+        unitAmount: 8850,
+        quantity: 2,
+      }),
+    ]);
+  });
+
+  it("falls back to Markdown budget rows and does not duplicate the total", () => {
+    const expenses = budgetExpensesFromMarkdown(
+      "## 预算\n- 大三巴门票：80元\n- 午餐：120元\n- 合计：200元",
+      [{ id: "s1", name: "大三巴", day: 1 }],
+    );
+
+    expect(expenses).toHaveLength(2);
+    expect(expenses.map((expense) => expense.unitAmount)).toEqual([
+      8000, 12000,
+    ]);
+    expect(expenses[0]).toMatchObject({
+      category: "ticket",
+      placeName: "大三巴",
+    });
+  });
+
+  it("does not turn a trip budget summary into another bill", () => {
+    const expenses = budgetExpensesFromMarkdown(
+      "**1人 · 9月1日 · 预算500元 · 全程步行**\n\n## 预算明细（约450元，留50元弹性）\n- 早餐35 + 午餐80 + 下午茶55 + 手信150 + 弹性130 = 450元",
+      [],
+    );
+
+    expect(expenses).toHaveLength(1);
+    expect(expenses[0]).toMatchObject({
+      unitAmount: 45000,
+      category: "meal",
+    });
+  });
+
   it("hides trip bridge payloads and internal comments from chat", () => {
     const reply = `行程已经准备好了。
 
@@ -33,7 +80,7 @@ describe("trip sync", () => {
   it("hides an incomplete streaming control block", () => {
     expect(
       stripAgentControlContent(
-        "正在生成。\n\n```lensgo-trip-update\n{\"tripId\":\"new\"",
+        '正在生成。\n\n```lensgo-trip-update\n{"tripId":"new"',
       ),
     ).toBe("正在生成。");
   });

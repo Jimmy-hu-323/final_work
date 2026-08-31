@@ -108,20 +108,6 @@ export default function HotelBillsPage() {
     [selectedTripId, trips],
   );
 
-  useEffect(() => {
-    const syncTrips = () => {
-      const nextTrips = loadTrips();
-      setTrips(nextTrips);
-      setSelectedTripId((current) =>
-        nextTrips.some((trip) => trip.id === current)
-          ? current
-          : preferredTrip(nextTrips)?.id || "",
-      );
-    };
-    window.addEventListener(TRIPS_CHANGED_EVENT, syncTrips);
-    return () => window.removeEventListener(TRIPS_CHANGED_EVENT, syncTrips);
-  }, []);
-
   const refreshExpenses = useCallback(async (tripId: string) => {
     if (!tripId) {
       setExpenses([]);
@@ -140,6 +126,20 @@ export default function HotelBillsPage() {
       setLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    const syncTrips = () => {
+      const nextTrips = loadTrips();
+      setTrips(nextTrips);
+      const nextTripId = nextTrips.some((trip) => trip.id === selectedTripId)
+        ? selectedTripId
+        : preferredTrip(nextTrips)?.id || "";
+      setSelectedTripId(nextTripId);
+      void refreshExpenses(nextTripId);
+    };
+    window.addEventListener(TRIPS_CHANGED_EVENT, syncTrips);
+    return () => window.removeEventListener(TRIPS_CHANGED_EVENT, syncTrips);
+  }, [refreshExpenses, selectedTripId]);
 
   useEffect(() => {
     void refreshExpenses(selectedTripId);
