@@ -45,9 +45,12 @@ AMAP_ENV_FILE = os.getenv(
     "AMAP_ENV_FILE", "/home/jimmyhu/Desktop/amap-mcp/.env"
 )
 AMAP_DIRECTION_BASE = "https://restapi.amap.com/v3/direction"
+AMAP_PLACE_TEXT_URL = "https://restapi.amap.com/v3/place/text"
 _COORD_RE = re.compile(r"^-?\d{1,3}\.\d+,-?\d{1,3}\.\d+$")
 _ROUTE_MODES = {"driving", "walking"}
+_CHAT_ROUTE_MODES = {"transit", "driving", "walking"}
 _route_cache_lock = threading.Lock()
+_navigation_amap_lock = threading.Lock()
 _local_album_lock = threading.Lock()
 
 
@@ -606,6 +609,259 @@ def _guide_number(value: object) -> float | None:
     except (ValueError, TypeError):
         return None
     return result if math.isfinite(result) else None
+
+
+def _append_navigation_polyline(points: list[list[float]], polyline: object) -> None:
+    if not isinstance(polyline, str):
+        return
+    for pair in polyline.split(";"):
+        lng_value, separator, lat_value = pair.partition(",")
+        if not separator:
+            continue
+        lng = _guide_number(lng_value)
+        lat = _guide_number(lat_value)
+        if lng is None or lat is None or not -180 <= lng <= 180 or not -90 <= lat <= 90:
+            continue
+        point = [lat, lng]
+        if not points or points[-1] != point:
+            points.append(point)
+
+
+def _transit_line_name(value: object, fallback: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        return fallback
+    return re.sub(r"\s*\(.*$", "", value.strip())[:120] or fallback
+
+
+def _transit_route_details(payload: dict) -> dict | None:
+    route = payload.get("route") if isinstance(payload.get("route"), dict) else {}
+    transits = route.get("transits") if isinstance(route.get("transits"), list) else []
+    if not transits:
+        return None
+    options = []
+    for transit in transits[:3]:
+        if not isinstance(transit, dict):
+            continue
+        legs = []
+        points: list[list[float]] = []
+        walking_distance = 0
+        walking_duration = 0
+        ride_count = 0
+        segments = transit.get("segments") if isinstance(transit.get("segments"), list) else []
+        for segment in segments:
+            if not isinstance(segment, dict):
+                continue
+            walking = segment.get("walking") if isinstance(segment.get("walking"), dict) else {}
+            walk_distance = int(_guide_number(walking.get("distance")) or 0)
+            walk_duration = int(_guide_number(walking.get("duration")) or 0)
+            walking_steps = walking.get("steps") if isinstance(walking.get("steps"), list) else []
+            for step in walking_steps:
+                if isinstance(step, dict):
+                    _append_navigation_polyline(points, step.get("polyline"))
+            if walk_distance or walk_duration:
+                walking_distance += walk_distance
+                walking_duration += walk_duration
+                legs.append({
+                    "kind": "walking",
+                    "distanceMeters": walk_distance,
+                    "durationSeconds": walk_duration,
+                })
+
+            bus = segment.get("bus") if isinstance(segment.get("bus"), dict) else {}
+            buslines = bus.get("buslines") if isinstance(bus.get("buslines"), list) else []
+            line = next((item for item in buslines if isinstance(item, dict)), None)
+            if line is not None:
+                departure = line.get("departure_stop") if isinstance(line.get("departure_stop"), dict) else {}
+                arrival = line.get("arrival_stop") if isinstance(line.get("arrival_stop"), dict) else {}
+                departure_name = departure.get("name") if isinstance(departure.get("name"), str) else ""
+                arrival_name = arrival.get("name") if isinstance(arrival.get("name"), str) else ""
+                if departure_name.strip() and arrival_name.strip():
+                    ride_count += 1
+                    legs.append({
+                        "kind": "bus",
+                        "line": _transit_line_name(line.get("name"), "公交车"),
+                        "fromStop": departure_name.strip()[:160],
+                        "toStop": arrival_name.strip()[:160],
+                        "durationSeconds": int(_guide_number(line.get("duration")) or 0),
+                        "viaStops": int(_guide_number(line.get("via_num")) or 0),
+                    })
+                    _append_navigation_polyline(points, line.get("polyline"))
+
+            railway = segment.get("railway") if isinstance(segment.get("railway"), dict) else {}
+            departure = railway.get("departure_stop") if isinstance(railway.get("departure_stop"), dict) else {}
+            arrival = railway.get("arrival_stop") if isinstance(railway.get("arrival_stop"), dict) else {}
+            departure_name = departure.get("name") if isinstance(departure.get("name"), str) else ""
+            arrival_name = arrival.get("name") if isinstance(arrival.get("name"), str) else ""
+            if departure_name.strip() and arrival_name.strip():
+                ride_count += 1
+                legs.append({
+                    "kind": "railway",
+                    "line": _transit_line_name(railway.get("name"), "轨道交通"),
+                    "fromStop": departure_name.strip()[:160],
+                    "toStop": arrival_name.strip()[:160],
+                    "durationSeconds": int(_guide_number(railway.get("time")) or 0),
+                    "viaStops": len(railway.get("via_stops")) if isinstance(railway.get("via_stops"), list) else 0,
+                })
+
+        reported_walking_distance = int(_guide_number(transit.get("walking_distance")) or 0)
+        if reported_walking_distance:
+            walking_distance = reported_walking_distance
+        if not walking_duration and walking_distance:
+            walking_duration = max(60, round(walking_distance / 1.2))
+        if not legs or not ride_count:
+            continue
+        options.append({
+            "durationSeconds": int(_guide_number(transit.get("duration")) or 0),
+            "walkingDurationSeconds": walking_duration,
+            "walkingDistanceMeters": walking_distance,
+            "transferCount": max(0, ride_count - 1),
+            "legs": legs,
+            "points": points,
+        })
+    if not options:
+        return None
+    best = options[0]
+    return {
+        "distance": route.get("distance") or 0,
+        "duration": best["durationSeconds"],
+        "steps": [],
+        "points": best["points"],
+        "transitOptions": [
+            {key: value for key, value in option.items() if key != "points"}
+            for option in options
+        ],
+    }
+
+
+def _navigation_amap_payload(url: str, key: str, params: dict[str, object]) -> dict:
+    """Call AMap serially and retry its QPS-limit response without leaking the key."""
+    with _navigation_amap_lock:
+        for attempt, delay in enumerate((1.0, 2.0, 4.0, 0.0)):
+            query = urlencode({**params, "key": key, "output": "json"})
+            with urlopen(f"{url}?{query}", timeout=15) as response:
+                payload = json.loads(response.read(2_000_000))
+            if isinstance(payload, dict) and str(payload.get("status")) == "1":
+                time.sleep(0.35)
+                return payload
+            if not isinstance(payload, dict) or str(payload.get("infocode")) != "10022" or attempt == 3:
+                raise RuntimeError("AMap request unavailable")
+            time.sleep(delay)
+    raise RuntimeError("AMap request unavailable")
+
+
+def _fetch_chat_navigation(
+    key: str,
+    latitude: float,
+    longitude: float,
+    destination: str,
+    mode: str,
+) -> dict:
+    search = _navigation_amap_payload(
+        AMAP_PLACE_TEXT_URL,
+        key,
+        {
+            "keywords": destination,
+            "city": "澳门",
+            "citylimit": "false",
+            "extensions": "base",
+            "offset": 10,
+            "page": 1,
+        },
+    )
+    candidates = search.get("pois") if isinstance(search.get("pois"), list) else []
+    selected = None
+    for poi in candidates:
+        if not isinstance(poi, dict) or not isinstance(poi.get("location"), str):
+            continue
+        location = poi["location"].split(",", 1)
+        if len(location) != 2:
+            continue
+        lng, lat = (_guide_number(part) for part in location)
+        if lng is None or lat is None or not -180 <= lng <= 180 or not -90 <= lat <= 90:
+            continue
+        selected = (poi, lng, lat)
+        break
+    if selected is None:
+        return {"available": False, "reason": f"没有找到“{destination}”，请补充更完整的地点名称。"}
+
+    poi, destination_lng, destination_lat = selected
+    route_params = {
+        "origin": f"{longitude:.6f},{latitude:.6f}",
+        "destination": f"{destination_lng:.6f},{destination_lat:.6f}",
+        "extensions": "base",
+    }
+    if mode == "transit":
+        route_params.update({"city": "澳门", "cityd": "澳门", "strategy": 0, "nightflag": 0})
+        route_url = f"{AMAP_DIRECTION_BASE}/transit/integrated"
+    else:
+        route_url = f"{AMAP_DIRECTION_BASE}/{mode}"
+    route = _navigation_amap_payload(route_url, key, route_params)
+    if mode == "transit":
+        path = _transit_route_details(route)
+    else:
+        paths = (route.get("route") or {}).get("paths") or []
+        path = paths[0] if paths and isinstance(paths[0], dict) else None
+        if path is not None:
+            path["points"] = _decode_polyline(route)
+            normalized_steps = []
+            raw_steps = path.get("steps") if isinstance(path.get("steps"), list) else []
+            for step in raw_steps:
+                instruction = step.get("instruction") if isinstance(step, dict) else None
+                if isinstance(instruction, str) and instruction.strip():
+                    normalized_steps.append(instruction.strip()[:300])
+            path["steps"] = normalized_steps
+    if path is None:
+        return {"available": False, "reason": "已经找到目的地，但高德地图暂时没有返回可用路线。"}
+    name = poi.get("name") if isinstance(poi.get("name"), str) else destination
+    address = poi.get("address") if isinstance(poi.get("address"), str) else ""
+    return {
+        "available": True,
+        "mode": mode,
+        "destination": {
+            "name": name.strip()[:200] or destination,
+            "address": address.strip()[:300],
+            "latitude": destination_lat,
+            "longitude": destination_lng,
+        },
+        "distanceMeters": int(_guide_number(path.get("distance")) or 0),
+        "durationSeconds": int(_guide_number(path.get("duration")) or 0),
+        "steps": path.get("steps", [])[:12],
+        "points": path.get("points", []),
+        "transitOptions": path.get("transitOptions", []),
+        "source": "高德地图实时路线规划",
+    }
+
+
+@router.post("/navigation")
+async def get_chat_navigation(data: dict = Body(...)) -> dict:
+    """Resolve a typed destination and route from a one-time phone location."""
+    lat = _guide_number(data.get("latitude"))
+    lng = _guide_number(data.get("longitude"))
+    destination = data.get("destination")
+    mode = data.get("mode") if data.get("mode") in _CHAT_ROUTE_MODES else "transit"
+    if (
+        lat is None
+        or lng is None
+        or not -90 <= lat <= 90
+        or not -180 <= lng <= 180
+        or not isinstance(destination, str)
+        or not 1 < len(destination.strip()) <= 100
+    ):
+        raise HTTPException(status_code=400, detail="对话导航参数无效")
+    key = _guide_amap_key()
+    if not key:
+        return {"available": False, "reason": "服务器尚未配置高德 Web 服务 Key，暂时无法规划路线。"}
+    try:
+        return await asyncio.to_thread(
+            _fetch_chat_navigation,
+            key,
+            lat,
+            lng,
+            destination.strip(),
+            mode,
+        )
+    except Exception:
+        return {"available": False, "reason": "高德地图查询暂时不可用，请稍后重试。"}
 
 
 def _guide_places(payload: dict, radius: int) -> list[dict]:

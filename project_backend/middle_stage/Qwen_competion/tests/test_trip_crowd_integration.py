@@ -32,6 +32,24 @@ def test_trip_page_requires_explicit_activation_and_offers_replanning():
     assert "replanTrip(selected.id)" in source
     assert "watchPosition" in read(MOBILE / "tripGuideRuntime.ts")
     assert 'status: "active"' in source
+    assert "requestInitialTripPosition()" not in source
+    assert 'departurePendingTripRef.current = active?.id || ""' in source
+    assert "行程已开始，正在后台获取手机位置" in source
+
+
+def test_chat_navigation_uses_one_time_location_and_private_post_body():
+    source = read(MOBILE / "MobileLocalApp.tsx")
+    runtime = read(MOBILE / "runtime.ts")
+    rust = read(TAURI / "src" / "mobile_runtime.rs")
+    permissions = read(TAURI / "permissions" / "mobile-runtime.toml")
+    assert "parseChatNavigationIntent(text)" in source
+    assert "requestChatNavigationPosition()" in source
+    assert "position.accuracy > 250" in source
+    assert "fetchChatNavigation(" in source
+    assert 'invoke<ChatNavigationResponse>("mobile_chat_navigation"' in runtime
+    assert 'qwenpaw_endpoint(&settings, "/api/travel-planner/navigation")' in rust
+    assert "reqwest::Method::POST" in rust
+    assert '"mobile_chat_navigation"' in permissions
 
 
 def test_crowd_client_uses_publisher_contract_and_stale_guard():

@@ -85,6 +85,134 @@ class GuideOriginTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("酒店", result["label"])
 
 
+class ChatNavigationTests(unittest.IsolatedAsyncioTestCase):
+    def test_transit_route_returns_station_based_options_without_turn_by_turn_steps(self):
+        place = {
+            "status": "1",
+            "pois": [{"name": "大三巴牌坊", "address": "大三巴街", "location": "113.5409,22.1975"}],
+        }
+        transit = {
+            "status": "1",
+            "route": {
+                "distance": "3200",
+                "transits": [
+                    {
+                        "duration": "1800",
+                        "walking_distance": "500",
+                        "segments": [
+                            {"walking": {"distance": "300", "duration": "240", "steps": [{"instruction": "向左转后步行", "polyline": "113.53,22.18;113.531,22.181"}]}},
+                            {"bus": {"buslines": [{
+                                "name": "25路(关闸总站--新马路)",
+                                "departure_stop": {"name": "新口岸"},
+                                "arrival_stop": {"name": "新马路"},
+                                "duration": "1100",
+                                "via_num": "8",
+                                "polyline": "113.531,22.181;113.54,22.197",
+                            }]}},
+                            {"walking": {"distance": "200", "duration": "160", "steps": [{"instruction": "右转到目的地"}]}},
+                        ],
+                    },
+                    {
+                        "duration": "2100",
+                        "walking_distance": "240",
+                        "segments": [
+                            {"walking": {"distance": "120", "duration": "100"}},
+                            {"bus": {"buslines": [{"name": "17路", "departure_stop": {"name": "A站"}, "arrival_stop": {"name": "B站"}}]}},
+                            {"walking": {"distance": "20", "duration": "20"}},
+                            {"bus": {"buslines": [{"name": "8A路", "departure_stop": {"name": "B站"}, "arrival_stop": {"name": "C站"}}]}},
+                            {"walking": {"distance": "100", "duration": "80"}},
+                        ],
+                    },
+                ],
+            },
+        }
+        with patch.object(guide, "_navigation_amap_payload", side_effect=[place, transit]) as request:
+            result = guide._fetch_chat_navigation("test", 22.18, 113.53, "大三巴", "transit")
+        self.assertTrue(result["available"])
+        self.assertEqual(result["mode"], "transit")
+        self.assertEqual(result["distanceMeters"], 3200)
+        self.assertEqual(result["durationSeconds"], 1800)
+        self.assertEqual(result["steps"], [])
+        self.assertEqual(len(result["transitOptions"]), 2)
+        first = result["transitOptions"][0]
+        self.assertEqual(first["walkingDurationSeconds"], 400)
+        self.assertEqual(first["walkingDistanceMeters"], 500)
+        self.assertEqual(first["transferCount"], 0)
+        self.assertEqual(first["legs"][1]["line"], "25路")
+        self.assertEqual(first["legs"][1]["fromStop"], "新口岸")
+        self.assertEqual(first["legs"][1]["toStop"], "新马路")
+        self.assertEqual(result["transitOptions"][1]["transferCount"], 1)
+        self.assertNotIn("向左转", str(result))
+        self.assertGreater(len(result["points"]), 1)
+        self.assertEqual(request.call_args_list[1].args[0], f"{guide.AMAP_DIRECTION_BASE}/transit/integrated")
+
+    async def test_defaults_to_public_transport(self):
+        with patch.object(guide, "_guide_amap_key", return_value="test"), patch.object(
+            guide, "_fetch_chat_navigation", return_value={"available": False}
+        ) as fetch:
+            await guide.get_chat_navigation(
+                {"latitude": 22.12, "longitude": 113.54, "destination": "大三巴"}
+            )
+        fetch.assert_called_once_with("test", 22.12, 113.54, "大三巴", "transit")
+
+    async def test_uses_one_time_coordinates_without_returning_the_origin(self):
+        route = {
+            "available": True,
+            "mode": "walking",
+            "destination": {
+                "name": "大三巴牌坊",
+                "address": "大三巴街",
+                "latitude": 22.1975,
+                "longitude": 113.5409,
+            },
+            "distanceMeters": 1200,
+            "durationSeconds": 900,
+            "steps": ["向北步行"],
+            "points": [],
+            "source": "高德地图实时路线规划",
+        }
+        with patch.object(guide, "_guide_amap_key", return_value="test"), patch.object(
+            guide, "_fetch_chat_navigation", return_value=route
+        ) as fetch:
+            result = await guide.get_chat_navigation(
+                {
+                    "latitude": 22.12,
+                    "longitude": 113.54,
+                    "destination": "大三巴",
+                    "mode": "walking",
+                }
+            )
+        self.assertTrue(result["available"])
+        self.assertNotIn("origin", result)
+        fetch.assert_called_once_with("test", 22.12, 113.54, "大三巴", "walking")
+
+    async def test_rejects_invalid_coordinates_or_destination(self):
+        for data in [
+            {"latitude": 91, "longitude": 113.54, "destination": "大三巴"},
+            {"latitude": 22.12, "longitude": True, "destination": "大三巴"},
+            {"latitude": 22.12, "longitude": 113.54, "destination": ""},
+        ]:
+            with self.assertRaises(HTTPException) as error:
+                await guide.get_chat_navigation(data)
+            self.assertEqual(error.exception.status_code, 400)
+
+    async def test_missing_key_and_upstream_errors_are_sanitized(self):
+        with patch.object(guide, "_guide_amap_key", return_value=""):
+            missing = await guide.get_chat_navigation(
+                {"latitude": 22.12, "longitude": 113.54, "destination": "大三巴"}
+            )
+        self.assertFalse(missing["available"])
+        self.assertIn("Key", missing["reason"])
+        with patch.object(guide, "_guide_amap_key", return_value="private"), patch.object(
+            guide, "_fetch_chat_navigation", side_effect=RuntimeError("secret-url")
+        ):
+            failed = await guide.get_chat_navigation(
+                {"latitude": 22.12, "longitude": 113.54, "destination": "大三巴"}
+            )
+        self.assertFalse(failed["available"])
+        self.assertNotIn("secret-url", str(failed))
+
+
 class GuideKeyReuseTests(unittest.TestCase):
     def test_existing_guide_key_takes_priority_without_reading_crowd_file(self):
         with patch.object(guide, "_amap_key", return_value="test-guide"), patch.object(Path, "open") as read:

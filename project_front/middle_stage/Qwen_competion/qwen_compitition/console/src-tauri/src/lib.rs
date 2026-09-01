@@ -131,6 +131,7 @@ pub fn run() {
             mobile_runtime::mobile_trip_guide_origin,
             mobile_runtime::mobile_hotel_gateway,
             mobile_runtime::mobile_qwenpaw_route,
+            mobile_runtime::mobile_chat_navigation,
             mobile_runtime::mobile_upload_cloud_photo,
             mobile_runtime::mobile_delete_cloud_photo,
             mobile_runtime::mobile_analyze_image,

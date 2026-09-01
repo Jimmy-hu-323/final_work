@@ -30,6 +30,7 @@ QWEN_WORKING = RUNTIME / "qwenpaw"
 ENV_FILE = ROOT / ".env.integrated"
 ENV_EXAMPLE = ROOT / ".env.integrated.example"
 LENSGO_CONFIG = ROOT / "config" / "lensgo.integrated.toml"
+AMAP_RATE_LIMIT_RUNNER = ROOT / "scripts" / "mcp" / "amap_rate_limited_runner.py"
 
 CUSTOM_SKILLS = ("macau_trip_planner", "qwenpaw_ai_drive_storage", "lensgo_pose_coach")
 
@@ -272,23 +273,36 @@ def write_missing_text(path: Path, content: str) -> str:
     return "conflict"
 
 
-def amap_driver(env: dict[str, str], server: Path, config: Path) -> str:
+def amap_driver(
+    env: dict[str, str], runner: Path, server: Path, config: Path
+) -> str:
     python = venv_python().resolve()
     output = (QWEN_WORKING / "workspaces" / "default" / "media" / "travel_maps").resolve()
+    minimum_interval = env_value(env, "AMAP_MIN_REQUEST_INTERVAL_SECONDS", "0.5")
+    retry_delays = env_value(env, "AMAP_RATE_LIMIT_RETRY_DELAYS", "1,2,4")
     return f"""name: amap-macau
 protocol: mcp
 endpoint:
   transport: stdio
   command: {yaml_string(python)}
   args:
-  - {yaml_string(server)}
+  - {yaml_string(runner)}
   env:
+    AMAP_SERVER_PATH:
+      source: literal
+      value: {yaml_string(server)}
     AMAP_CONFIG_FILE:
       source: literal
       value: {yaml_string(config)}
     AMAP_MAP_OUTPUT_DIR:
       source: literal
       value: {yaml_string(output)}
+    AMAP_MIN_REQUEST_INTERVAL_SECONDS:
+      source: literal
+      value: {yaml_string(minimum_interval)}
+    AMAP_RATE_LIMIT_RETRY_DELAYS:
+      source: literal
+      value: {yaml_string(retry_delays)}
 credentials: {{}}
 config:
   display_name: 高德地图（澳门行程）
@@ -417,10 +431,21 @@ def install_drivers(env: dict[str, str], workspaces: Iterable[Path]) -> None:
             crowd_driver(env),
         )
         print(f"[bootstrap] {workspace.name}/lensgo-crowd.yaml: {status}")
-        if amap_server and amap_config and amap_server.is_file() and amap_config.is_file():
+        if (
+            amap_server
+            and amap_config
+            and amap_server.is_file()
+            and amap_config.is_file()
+            and AMAP_RATE_LIMIT_RUNNER.is_file()
+        ):
             status = write_missing_text(
                 driver_dir / "amap-macau.yaml",
-                amap_driver(env, amap_server, amap_config),
+                amap_driver(
+                    env,
+                    AMAP_RATE_LIMIT_RUNNER,
+                    amap_server,
+                    amap_config,
+                ),
             )
             print(f"[bootstrap] {workspace.name}/amap-macau.yaml: {status}")
         else:

@@ -190,6 +190,38 @@ export type QwenPawRouteResponse = {
   cached?: boolean;
 };
 
+export type ChatNavigationResponse = {
+  available: boolean;
+  reason?: string;
+  mode?: "transit" | "driving" | "walking";
+  destination?: {
+    name: string;
+    address: string;
+    latitude: number;
+    longitude: number;
+  };
+  distanceMeters?: number;
+  durationSeconds?: number;
+  steps?: string[];
+  points?: Array<[number, number]>;
+  transitOptions?: Array<{
+    durationSeconds: number;
+    walkingDurationSeconds: number;
+    walkingDistanceMeters: number;
+    transferCount: number;
+    legs: Array<{
+      kind: "walking" | "bus" | "railway";
+      line?: string;
+      fromStop?: string;
+      toStop?: string;
+      durationSeconds?: number;
+      distanceMeters?: number;
+      viaStops?: number;
+    }>;
+  }>;
+  source?: string;
+};
+
 export type HotelBillItem = {
   label: string;
   amount: number;
@@ -409,6 +441,24 @@ export async function fetchQwenPawRoute(
   }
   return invoke<QwenPawRouteResponse>("mobile_qwenpaw_route", {
     request: { origin, destination, mode },
+  });
+}
+
+export async function fetchChatNavigation(
+  position: TripPosition,
+  destination: string,
+  mode: "transit" | "driving" | "walking",
+): Promise<ChatNavigationResponse> {
+  if (!isTauri()) {
+    throw new Error("实时导航请在 Android App 中使用");
+  }
+  return invoke<ChatNavigationResponse>("mobile_chat_navigation", {
+    request: {
+      latitude: position.latitude,
+      longitude: position.longitude,
+      destination,
+      mode,
+    },
   });
 }
 

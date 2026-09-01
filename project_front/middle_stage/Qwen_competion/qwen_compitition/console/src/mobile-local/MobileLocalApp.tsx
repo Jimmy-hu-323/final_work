@@ -86,6 +86,7 @@ import {
   deleteCloudAlbumItem,
   deleteTripExpenses,
   extractPhotoMetadata,
+  fetchChatNavigation,
   fetchQwenPawLatestItinerary,
   fileToDataUrl,
   generateMobileImage,
@@ -131,9 +132,9 @@ import {
   loadCrowdServiceConfig,
   locateTripStop,
   reorderRemainingStops,
-  requestInitialTripPosition,
   revisedTripMarkdown,
   saveCrowdServiceConfig,
+  startNativeLocationWatch,
   toTripPosition,
   type CrowdPlace,
   type CrowdServiceConfig,
@@ -164,6 +165,7 @@ import {
   TRIPS_CHANGED_EVENT,
   GUIDE_OPTIONS,
   GUIDE_DEPARTURE_EVENT,
+  isFreshGuidePosition,
 } from "./tripGuide";
 import { startTripGuideRuntime, replyToTripGuide } from "./tripGuideRuntime";
 import {
@@ -185,6 +187,10 @@ import {
   remoteItinerarySignature,
   stripAgentControlContent,
 } from "./tripSync";
+import {
+  formatChatNavigation,
+  parseChatNavigationIntent,
+} from "./chatNavigation";
 import styles from "./mobileLocal.module.less";
 
 const NAV_ITEMS = [
@@ -205,6 +211,59 @@ const PHOTO_SEARCH_PATTERN =
 const POSE_PREVIEW_PATTERN =
   /(?:生成|制作|做一张|看看|预览).{0,18}(?:姿势|拍照效果|参考图)|(?:姿势|拍照效果|参考图).{0,18}(?:生成|制作|预览)/;
 const CHAT_POSE_DRAFT_KEY = "lensgo_mobile_chat_pose_draft_v1";
+
+async function requestChatNavigationPosition(): Promise<TripPosition> {
+  const recent = loadTrips().find(
+    (trip) =>
+      trip.status === "active" &&
+      trip.lastPosition &&
+      isFreshGuidePosition(trip.lastPosition),
+  )?.lastPosition;
+  if (recent) return recent;
+  if (window.LensGoNative?.startLocationUpdates) {
+    return new Promise<TripPosition>((resolve, reject) => {
+      let cleanup: (() => void) | null = null;
+      const timer = window.setTimeout(() => {
+        cleanup?.();
+        reject(new Error("定位超时，请确认系统定位已开启后重试"));
+      }, 20_000);
+      cleanup = startNativeLocationWatch(
+        (position) => {
+          const age = Date.now() - position.recordedAt;
+          if (
+            age < 0 ||
+            age > 60_000 ||
+            position.accuracy <= 0 ||
+            position.accuracy > 250
+          )
+            return;
+          window.clearTimeout(timer);
+          cleanup?.();
+          resolve(position);
+        },
+        (error) => {
+          window.clearTimeout(timer);
+          cleanup?.();
+          reject(new Error(error));
+        },
+      );
+      if (!cleanup) {
+        window.clearTimeout(timer);
+        reject(new Error("当前环境没有原生定位桥接"));
+      }
+    });
+  }
+  if (!("geolocation" in navigator)) {
+    throw new Error("此设备不支持定位功能");
+  }
+  return new Promise<TripPosition>((resolve, reject) => {
+    navigator.geolocation.getCurrentPosition(
+      (position) => resolve(toTripPosition(position)),
+      (error) => reject(new Error(geolocationErrorMessage(error))),
+      { enableHighAccuracy: true, maximumAge: 5_000, timeout: 20_000 },
+    );
+  });
+}
 
 function posePreviewPrompt(description: string): string {
   return `旅行摄影姿势效果预览，${description}。生成一张写实照片，人物全身或大半身构图，动作自然且容易模仿，站位安全，背景清晰，无文字无水印。`;
@@ -982,6 +1041,9 @@ function LocalChatPage({
     const visibleText =
       text || "请保持现场背景不变，生成自然的旅行拍照姿势效果预览。";
     const imageTask = Boolean(sourceImage) || POSE_PREVIEW_PATTERN.test(text);
+    const navigationIntent = sourceImage
+      ? null
+      : parseChatNavigationIntent(text);
     if (activeSession?.guide?.status === "loading") {
       message.info("景点故事正在讲解，请稍候再追问");
       return;
@@ -995,8 +1057,14 @@ function LocalChatPage({
       navigate("/local/settings");
       return;
     }
+    if (navigationIntent && !qwenpawConfigured) {
+      message.warning("请先配置 QwenPaw 服务，实时导航需要连接地图后端");
+      navigate("/local/settings");
+      return;
+    }
     if (
       !imageTask &&
+      !navigationIntent &&
       (qwenpawSelected ? !qwenpawConfigured : !fallbackConfigured)
     ) {
       message.warning(
@@ -1031,7 +1099,9 @@ function LocalChatPage({
     setPendingImage(null);
     setSending(true);
     setAgentActivity(
-      imageTask
+      navigationIntent
+        ? "正在获取本次导航所需的手机位置…"
+        : imageTask
         ? sourceMedia
           ? "正在保持现场背景并合成人物姿势…"
           : "正在生成姿势效果预览…"
@@ -1074,6 +1144,43 @@ function LocalChatPage({
             createdAt: Date.now(),
           },
         ]);
+        return;
+      }
+      if (navigationIntent) {
+        try {
+          setAgentActivity("正在获取本次导航所需的手机位置…");
+          const position = await requestChatNavigationPosition();
+          setAgentActivity("正在通过高德地图规划路线…");
+          const route = await fetchChatNavigation(
+            position,
+            navigationIntent.destination,
+            navigationIntent.mode,
+          );
+          setMessages((current) => [
+            ...current,
+            {
+              id: createId("message"),
+              role: "assistant",
+              content: formatChatNavigation(
+                route,
+                navigationIntent.destination,
+              ),
+              createdAt: Date.now(),
+            },
+          ]);
+        } catch (error) {
+          setMessages((current) => [
+            ...current,
+            {
+              id: createId("message"),
+              role: "assistant",
+              content: `暂时无法完成实时导航：${errorText(
+                error,
+              )}。请确认定位权限和网络后重试。`,
+              createdAt: Date.now(),
+            },
+          ]);
+        }
         return;
       }
       if (activeSession?.guide) {
@@ -2030,6 +2137,7 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
   const lastCrowdFetchRef = useRef(0);
   const departureVersionRef = useRef(0);
   const departureTripRef = useRef("");
+  const departurePendingTripRef = useRef("");
   const travelMountedRef = useRef(true);
   const crowdReminderRef = useRef<ReturnType<typeof Modal.confirm> | null>(
     null,
@@ -2054,6 +2162,13 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
           new CustomEvent(GUIDE_DEPARTURE_EVENT, { detail: false }),
         );
       }
+      if (
+        departurePendingTripRef.current &&
+        (current?.id !== departurePendingTripRef.current ||
+          current.status !== "active")
+      ) {
+        departurePendingTripRef.current = "";
+      }
       selectedRef.current = current;
       setSelected(current);
     };
@@ -2061,6 +2176,7 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
     return () => {
       travelMountedRef.current = false;
       departureVersionRef.current += 1;
+      departurePendingTripRef.current = "";
       crowdReminderRef.current?.destroy();
       window.dispatchEvent(
         new CustomEvent(GUIDE_DEPARTURE_EVENT, { detail: false }),
@@ -2511,6 +2627,11 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
           } · 误差约 ${Math.round(position.accuracy)} 米`
         : `定位正常 · 误差约 ${Math.round(position.accuracy)} 米`,
     );
+    if (departurePendingTripRef.current === tripId) {
+      departurePendingTripRef.current = "";
+      void showDepartureChoices(trip, position);
+      return;
+    }
     if (
       !crowdPlacesRef.current.length ||
       Date.now() - lastCrowdFetchRef.current > 2 * 60_000
@@ -2564,70 +2685,48 @@ function LocalTravelPage({ configured }: { configured: boolean }) {
         "开启后 LensGo 才会读取手机位置，并通过地图服务识别附近酒店或地标，询问你想去哪里、展示附近景点人流。之后按实际位置触发讲解，不要求按行程顺序。未开启的规划不会跟踪位置。",
       okText: "允许定位并开始",
       cancelText: "暂不开始",
-      onOk: async () => {
-        try {
-          const position = window.LensGoNative?.startLocationUpdates
-            ? await requestInitialTripPosition()
-            : await new Promise<TripPosition>((resolve, reject) => {
-                navigator.geolocation.getCurrentPosition(
-                  (rawPosition) => resolve(toTripPosition(rawPosition)),
-                  (error) => reject(new Error(geolocationErrorMessage(error))),
-                  {
-                    enableHighAccuracy: true,
-                    maximumAge: 5_000,
-                    timeout: 20_000,
-                  },
-                );
-              });
-          if (
-            !travelMountedRef.current ||
-            selectedRef.current?.id !== selected.id
-          )
-            return;
-          // The chooser owns this short pause; GPS continues, but an arrival
-          // story must not steal the screen while the visitor is choosing.
-          window.dispatchEvent(
-            new CustomEvent(GUIDE_DEPARTURE_EVENT, { detail: true }),
-          );
-          const currentIndex = -1;
-          const next = loadTrips().map((trip) => {
-            if (trip.id === selected.id) {
-              return {
-                ...trip,
-                stops,
-                status: "active" as const,
-                currentStopIndex: currentIndex,
-                startedAt: Date.now(),
-                completedAt: undefined,
-                lastPosition: position,
-                guideDestination: undefined,
-                guidePlaces: departureGuidePlaces(trip, crowdPlacesRef.current),
-              };
-            }
-            return trip.status === "active"
-              ? { ...trip, status: "planned" as const }
-              : trip;
-          });
-          const active = next.find((trip) => trip.id === selected.id) || null;
-          setSelected(active);
-          selectedRef.current = active;
-          setTrips(next);
-          saveTrips(next);
-          if (active?.planningSessionId) {
-            updateChatSessions((current) =>
-              linkChatSessionToTrip(current, active.planningSessionId!, active),
-            );
+      onOk: () => {
+        if (
+          !travelMountedRef.current ||
+          selectedRef.current?.id !== selected.id
+        )
+          return;
+        const currentIndex = -1;
+        const next = loadTrips().map((trip) => {
+          if (trip.id === selected.id) {
+            return {
+              ...trip,
+              stops,
+              status: "active" as const,
+              currentStopIndex: currentIndex,
+              startedAt: Date.now(),
+              completedAt: undefined,
+              lastPosition: undefined,
+              guideDestination: undefined,
+              guidePlaces: departureGuidePlaces(trip, crowdPlacesRef.current),
+            };
           }
-          announceTripUpdate(
-            "行程已开始",
-            `${selected.title}已开始，请根据当前位置选择想去的地方，也可以自由走动。`,
+          return trip.status === "active"
+            ? { ...trip, status: "planned" as const }
+            : trip;
+        });
+        const active = next.find((trip) => trip.id === selected.id) || null;
+        setSelected(active);
+        selectedRef.current = active;
+        departurePendingTripRef.current = active?.id || "";
+        setTrips(next);
+        saveTrips(next);
+        if (active?.planningSessionId) {
+          updateChatSessions((current) =>
+            linkChatSessionToTrip(current, active.planningSessionId!, active),
           );
-          message.success("行程已开始，位置跟踪已开启");
-          if (active) void showDepartureChoices(active, position);
-        } catch (error) {
-          message.error(errorText(error));
-          throw error;
         }
+        setPositionText("行程已开始，正在后台获取手机位置…");
+        announceTripUpdate(
+          "行程已开始",
+          `${selected.title}已开始，正在获取当前位置；定位成功后可选择想去的地方，也可以自由走动。`,
+        );
+        message.success("行程已开始，正在后台获取手机位置");
       },
     });
   };

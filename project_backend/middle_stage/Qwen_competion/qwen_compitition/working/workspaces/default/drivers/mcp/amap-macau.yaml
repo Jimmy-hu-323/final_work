@@ -4,14 +4,23 @@ endpoint:
   transport: stdio
   command: /home/jimmyhu/Desktop/qwen_compitition/qwenpaw-local-latest/.venv/bin/python
   args:
-  - /home/jimmyhu/Desktop/amap-mcp/server.py
+  - /home/jimmyhu/qwenpaw_competition/middle_stage/Qwen_competion/scripts/mcp/amap_rate_limited_runner.py
   env:
+    AMAP_SERVER_PATH:
+      source: literal
+      value: /home/jimmyhu/Desktop/amap-mcp/server.py
     AMAP_CONFIG_FILE:
       source: literal
       value: /home/jimmyhu/Desktop/amap-mcp/.env
     AMAP_MAP_OUTPUT_DIR:
       source: literal
       value: /home/jimmyhu/Desktop/qwen_compitition/qwenpaw-local-latest/working/workspaces/default/media/travel_maps
+    AMAP_MIN_REQUEST_INTERVAL_SECONDS:
+      source: literal
+      value: '0.5'
+    AMAP_RATE_LIMIT_RETRY_DELAYS:
+      source: literal
+      value: 1,2,4
 credentials: {}
 config:
   display_name: 高德地图（澳门行程）

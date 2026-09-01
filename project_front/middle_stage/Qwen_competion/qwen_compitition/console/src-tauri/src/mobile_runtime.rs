@@ -141,6 +141,15 @@ pub struct QwenPawRouteRequest {
     mode: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatNavigationRequest {
+    latitude: f64,
+    longitude: f64,
+    destination: String,
+    mode: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct QwenPawStreamPayload {
@@ -1106,6 +1115,38 @@ pub async fn mobile_qwenpaw_route(
         .json::<Value>()
         .await
         .map_err(|error| format!("服务器高德路线格式无效：{error}"))
+}
+
+#[tauri::command]
+pub async fn mobile_chat_navigation(
+    app: AppHandle,
+    request: ChatNavigationRequest,
+) -> Result<Value, String> {
+    let settings = load_stored_settings(&app)?;
+    let endpoint = qwenpaw_endpoint(&settings, "/api/travel-planner/navigation")?;
+    let mode = match request.mode.as_deref() {
+        Some("walking") => "walking",
+        Some("driving") => "driving",
+        _ => "transit",
+    };
+    let client = reqwest::Client::new();
+    let response = qwenpaw_request(&client, &settings, reqwest::Method::POST, endpoint)
+        .json(&json!({
+            "latitude": request.latitude,
+            "longitude": request.longitude,
+            "destination": request.destination,
+            "mode": mode,
+        }))
+        .send()
+        .await
+        .map_err(|error| format!("无法连接对话导航服务：{error}"))?;
+    if !response.status().is_success() {
+        return Err(parse_error(response).await);
+    }
+    response
+        .json::<Value>()
+        .await
+        .map_err(|error| format!("对话导航返回格式无效：{error}"))
 }
 
 fn decode_image_data_url(value: &str) -> Result<(String, Vec<u8>), String> {

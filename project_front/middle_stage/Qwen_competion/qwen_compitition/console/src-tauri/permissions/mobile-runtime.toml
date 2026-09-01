@@ -16,6 +16,7 @@ commands.allow = [
   "mobile_trip_guide_origin",
   "mobile_hotel_gateway",
   "mobile_qwenpaw_route",
+  "mobile_chat_navigation",
   "mobile_upload_cloud_photo",
   "mobile_delete_cloud_photo",
   "mobile_analyze_image",
