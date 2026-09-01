@@ -209,9 +209,31 @@ function errorText(error: unknown): string {
 
 const PHOTO_SEARCH_PATTERN =
   /照片|图片|相册|拍过|拍的|影像|找图|发给我|发出来|哪一张|哪张/;
-const POSE_PREVIEW_PATTERN =
-  /(?:生成|制作|做一张|看看|预览).{0,18}(?:姿势|拍照效果|参考图)|(?:姿势|拍照效果|参考图).{0,18}(?:生成|制作|预览)/;
+const IMAGE_GENERATION_PATTERN =
+  /(?:生成|制作|做一张|画一张|绘制|创作|合成|生图|预览).{0,24}(?:图片|图像|照片|效果图|预览图|参考图|姿势|拍照效果)|(?:图片|图像|效果图|预览图|参考图|姿势|拍照效果).{0,24}(?:生成|制作|做一张|画一张|绘制|创作|合成|生图|预览)|(?:generate|create|make|draw).{0,24}(?:image|picture|photo|preview)/i;
+const PHOTO_EXPLANATION_PATTERN =
+  /讲解|介绍|分析|识别|辨认|解读|说明|告诉我|是什么|什么文物|有什么|历史|故事|含义|用途|看不清|看一下|看看这|describe|explain|identify|analy[sz]e|what is|tell me about/i;
+const IMAGE_REFINEMENT_PATTERN =
+  /再生成|重新生成|重做|调整|修改|改成|换成|往左|往右|靠左|靠右|大一点|小一点|不要遮挡|去掉|增加|添加|换个|上一张|刚才那张|这张效果图|人物.{0,12}(?:移动|左|右|大|小)/;
 const CHAT_POSE_DRAFT_KEY = "lensgo_mobile_chat_pose_draft_v1";
+
+type PendingPhotoMode = "auto" | "explain" | "generate";
+
+function resolvePendingPhotoIntent(
+  text: string,
+  mode: PendingPhotoMode,
+): Exclude<PendingPhotoMode, "auto"> | "clarify" {
+  if (mode !== "auto") return mode;
+  if (IMAGE_GENERATION_PATTERN.test(text)) return "generate";
+  if (PHOTO_EXPLANATION_PATTERN.test(text)) return "explain";
+  return "clarify";
+}
+
+type NativeCapturedPhoto = {
+  name: string;
+  dataUrl: string;
+  savedToGallery: boolean;
+};
 
 async function requestChatNavigationPosition(): Promise<TripPosition> {
   const recent = loadTrips().find(
@@ -274,6 +296,10 @@ function sceneCompositePrompt(description: string): string {
   return `把上传的现场照片作为唯一背景参考。严格保持原照片的建筑、景物、视角、构图、光线和环境不变，不添加、删除或移动任何背景元素。只在画面中安全且适合拍照的位置新增一位写实游客，并让人物完成这个姿势：${
     description || "自然、轻松、容易模仿的旅行拍照姿势"
   }。人物比例、透视、阴影和现场光线必须真实协调，不遮挡主要地标，不添加文字或水印。`;
+}
+
+function imageRevisionPrompt(description: string): string {
+  return `基于上传的上一张效果图继续修改。只调整用户明确要求的内容，其他人物、建筑、景物、视角、构图、光线和环境尽量保持不变。用户要求：${description}。保持画面写实自然、比例和阴影协调，不添加文字或水印。`;
 }
 
 function parseJsonObject(value: string): Record<string, unknown> | null {
@@ -907,13 +933,18 @@ function LocalChatPage({
   });
   const [sending, setSending] = useState(false);
   const [agentActivity, setAgentActivity] = useState("");
+  const [photoSourceOpen, setPhotoSourceOpen] = useState(false);
   const [albumItems, setAlbumItems] = useState<AlbumItem[]>([]);
   const [chatMediaItems, setChatMediaItems] = useState<ChatMediaItem[]>([]);
   const [pendingImage, setPendingImage] = useState<{
     name: string;
     dataUrl: string;
     analysisDataUrl: string;
+    source: "camera" | "gallery";
+    savedToGallery: boolean;
   } | null>(null);
+  const [pendingPhotoMode, setPendingPhotoMode] =
+    useState<PendingPhotoMode>("auto");
   const [apiModels, setApiModels] = useState<string[]>(
     settings?.model ? [settings.model] : [],
   );
@@ -923,6 +954,7 @@ function LocalChatPage({
   const [expandedTripIds, setExpandedTripIds] = useState<string[]>([]);
   const endRef = useRef<HTMLDivElement>(null);
   const chatImageInputRef = useRef<HTMLInputElement>(null);
+  const chatCameraInputRef = useRef<HTMLInputElement>(null);
   const activeSession =
     sessions.find((session) => session.id === activeSessionId) || sessions[0];
   const activeTripId =
@@ -1046,8 +1078,44 @@ function LocalChatPage({
     }
     if (!text) return;
     const visibleText = text;
-    const photoTask = Boolean(sourceImage);
-    const imageTask = !photoTask && POSE_PREVIEW_PATTERN.test(text);
+    const photoIntent = sourceImage
+      ? resolvePendingPhotoIntent(text, pendingPhotoMode)
+      : null;
+    if (sourceImage && photoIntent === "clarify") {
+      const clarification =
+        "你希望我讲解这张照片，还是根据它生成效果图？请补充说明，或者在照片下方选择“照片讲解”或“生成效果图”，我确认后再处理。";
+      setMessages((current) =>
+        current[current.length - 1]?.content === clarification
+          ? current
+          : [
+              ...current,
+              {
+                id: createId("message"),
+                role: "assistant",
+                content: clarification,
+                createdAt: Date.now(),
+              },
+            ],
+      );
+      return;
+    }
+    const lastPreviewMessage = [...messages]
+      .reverse()
+      .find(
+        (item) => item.role === "assistant" && item.chatMediaKind === "preview",
+      );
+    const previousPreview = lastPreviewMessage?.chatMediaId
+      ? chatMediaById.get(lastPreviewMessage.chatMediaId)
+      : undefined;
+    const revisionTask = Boolean(
+      !sourceImage && previousPreview && IMAGE_REFINEMENT_PATTERN.test(text),
+    );
+    const photoTask = Boolean(sourceImage && photoIntent === "explain");
+    const imageTask = Boolean(
+      (sourceImage && photoIntent === "generate") ||
+        (!sourceImage && IMAGE_GENERATION_PATTERN.test(text)) ||
+        revisionTask,
+    );
     const useQwenPaw = qwenpawSelected || photoTask;
     const navigationIntent = sourceImage
       ? null
@@ -1111,6 +1179,7 @@ function LocalChatPage({
     setMessages(next);
     setInput("");
     setPendingImage(null);
+    setPendingPhotoMode("auto");
     setSending(true);
     setAgentActivity(
       navigationIntent
@@ -1130,22 +1199,29 @@ function LocalChatPage({
     let guideReplyId: string | undefined;
     try {
       if (imageTask) {
+        const referenceMedia =
+          sourceMedia || (revisionTask ? previousPreview : undefined);
         const result = await generateMobileImage(
-          sourceMedia
+          revisionTask
+            ? imageRevisionPrompt(visibleText)
+            : sourceMedia
             ? sceneCompositePrompt(text)
             : posePreviewPrompt(visibleText),
           "1024x1024",
-          sourceMedia?.dataUrl,
+          sourceImage?.analysisDataUrl ||
+            (revisionTask ? previousPreview?.dataUrl : undefined),
         );
         const preview: ChatMediaItem = {
           id: createId("chat-preview"),
-          name: sourceMedia
+          name: revisionTask
+            ? `调整后的效果图-${new Date().toLocaleString()}`
+            : sourceMedia
             ? `现场拍照效果-${new Date().toLocaleString()}`
             : `姿势参考图-${new Date().toLocaleString()}`,
           dataUrl: result.dataUrl,
           kind: "preview",
           createdAt: Date.now(),
-          sourceMediaId: sourceMedia?.id,
+          sourceMediaId: referenceMedia?.id,
         };
         await putChatMediaItem(preview);
         setChatMediaItems((current) => [...current, preview]);
@@ -1154,7 +1230,9 @@ function LocalChatPage({
           {
             id: createId("message"),
             role: "assistant",
-            content: sourceMedia
+            content: revisionTask
+              ? "已经根据你的要求调整了上一张效果图。满意后再保存到相册。"
+              : sourceMedia
               ? "这是以你上传的现场照片为背景生成的拍照效果预览。满意后再保存到相册。"
               : "姿势效果预览已经生成。满意后再保存到相册。",
             chatMediaId: preview.id,
@@ -1589,22 +1667,85 @@ function LocalChatPage({
     }
   };
 
-  const selectChatImage = async (files: FileList | null) => {
+  const preparePendingChatImage = async (
+    name: string,
+    dataUrl: string,
+    source: "camera" | "gallery",
+    savedToGallery: boolean,
+  ) => {
+    setPendingPhotoMode("auto");
+    setPendingImage({
+      name,
+      dataUrl,
+      analysisDataUrl: await prepareImageForAnalysis(dataUrl),
+      source,
+      savedToGallery,
+    });
+  };
+
+  const selectChatImage = async (
+    files: FileList | null,
+    source: "camera" | "gallery",
+  ) => {
     const file = files?.[0];
     if (!file) return;
     try {
       const dataUrl = await fileToDataUrl(file);
-      setPendingImage({
-        name: file.name,
-        dataUrl,
-        analysisDataUrl: await prepareImageForAnalysis(dataUrl),
-      });
+      await preparePendingChatImage(file.name, dataUrl, source, false);
     } catch (error) {
       message.error(errorText(error));
     } finally {
       if (chatImageInputRef.current) chatImageInputRef.current.value = "";
+      if (chatCameraInputRef.current) chatCameraInputRef.current.value = "";
     }
   };
+
+  const captureChatPhoto = () => {
+    setPhotoSourceOpen(false);
+    if (window.LensGoNative?.capturePhotoToGallery) {
+      const started = window.LensGoNative.capturePhotoToGallery();
+      if (!started) message.error("无法打开手机相机");
+      return;
+    }
+    chatCameraInputRef.current?.click();
+  };
+
+  useEffect(() => {
+    let active = true;
+    const onCaptured = (event: Event) => {
+      const detail = (event as CustomEvent<NativeCapturedPhoto>).detail;
+      if (!detail?.name || !detail.dataUrl) {
+        message.error("相机没有返回可用照片");
+        return;
+      }
+      void prepareImageForAnalysis(detail.dataUrl)
+        .then((analysisDataUrl) => {
+          if (!active) return;
+          setPendingImage({
+            name: detail.name,
+            dataUrl: detail.dataUrl,
+            analysisDataUrl,
+            source: "camera",
+            savedToGallery: Boolean(detail.savedToGallery),
+          });
+          setPendingPhotoMode("auto");
+          message.success("照片已拍摄并保存到系统相册");
+        })
+        .catch((error) => message.error(errorText(error)));
+    };
+    const onCameraError = (event: Event) => {
+      message.error(
+        String((event as CustomEvent<string>).detail || "拍照未完成，请重试"),
+      );
+    };
+    window.addEventListener("lensgo-native-camera-photo", onCaptured);
+    window.addEventListener("lensgo-native-camera-error", onCameraError);
+    return () => {
+      active = false;
+      window.removeEventListener("lensgo-native-camera-photo", onCaptured);
+      window.removeEventListener("lensgo-native-camera-error", onCameraError);
+    };
+  }, []);
 
   const saveChatPreview = async (item: LocalMessage) => {
     if (!item.chatMediaId || item.savedAlbumItemId) return;
@@ -1958,22 +2099,70 @@ function LocalChatPage({
           hidden
           type="file"
           accept="image/*"
-          onChange={(event) => void selectChatImage(event.target.files)}
+          onChange={(event) =>
+            void selectChatImage(event.target.files, "gallery")
+          }
+        />
+        <input
+          ref={chatCameraInputRef}
+          hidden
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={(event) =>
+            void selectChatImage(event.target.files, "camera")
+          }
         />
         {pendingImage && (
           <div className={styles.chatPendingImage}>
             <img src={pendingImage.dataUrl} alt={pendingImage.name} />
             <div>
               <strong>{pendingImage.name}</strong>
-              <span>图片已选择；描述你想了解的内容后再发送</span>
+              <span>
+                {pendingImage.source === "camera"
+                  ? pendingImage.savedToGallery
+                    ? "已保存到系统相册；选择处理方式并描述后发送"
+                    : "已拍摄；选择处理方式并描述后发送"
+                  : "图片已选择；选择处理方式并描述后发送"}
+              </span>
             </div>
             <Button
               type="text"
               shape="circle"
               icon={<X size={17} />}
               aria-label="移除图片"
-              onClick={() => setPendingImage(null)}
+              onClick={() => {
+                setPendingImage(null);
+                setPendingPhotoMode("auto");
+              }}
             />
+            <section className={styles.chatPhotoIntent}>
+              <span>处理方式</span>
+              <div>
+                {(
+                  [
+                    ["auto", "智能判断"],
+                    ["explain", "照片讲解"],
+                    ["generate", "生成效果图"],
+                  ] as const
+                ).map(([mode, label]) => (
+                  <button
+                    type="button"
+                    key={mode}
+                    className={
+                      pendingPhotoMode === mode
+                        ? styles.chatPhotoIntentActive
+                        : undefined
+                    }
+                    aria-pressed={pendingPhotoMode === mode}
+                    disabled={sending}
+                    onClick={() => setPendingPhotoMode(mode)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </section>
           </div>
         )}
         <Input.TextArea
@@ -1981,7 +2170,15 @@ function LocalChatPage({
           onChange={(event) => setInput(event.target.value)}
           autoSize={{ minRows: 2, maxRows: 5 }}
           maxLength={10000}
-          placeholder="输入消息；也可先上传照片，再描述想了解的内容…"
+          placeholder={
+            pendingImage
+              ? pendingPhotoMode === "generate"
+                ? "描述想生成的人物、姿势和画面效果…"
+                : pendingPhotoMode === "explain"
+                ? "描述你想识别或了解的内容…"
+                : "描述想讲解的内容，或明确说“生成效果图”…"
+              : "输入消息；也可先上传照片，再描述想了解的内容…"
+          }
           onPressEnter={(event) => {
             if (!event.shiftKey) {
               event.preventDefault();
@@ -1996,9 +2193,9 @@ function LocalChatPage({
               shape="circle"
               icon={<ImagePlus size={19} />}
               disabled={sending}
-              aria-label="上传现场照片"
-              title="上传现场照片"
-              onClick={() => chatImageInputRef.current?.click()}
+              aria-label="添加现场照片"
+              title="拍照或从相册选择"
+              onClick={() => setPhotoSourceOpen(true)}
             />
             <span>{input.length}/10000</span>
           </div>
@@ -2013,6 +2210,40 @@ function LocalChatPage({
           />
         </div>
       </div>
+
+      <Modal
+        open={photoSourceOpen}
+        title="添加现场照片"
+        footer={null}
+        centered
+        destroyOnHidden
+        onCancel={() => setPhotoSourceOpen(false)}
+      >
+        <div className={styles.chatPhotoSourceOptions}>
+          <button type="button" onClick={captureChatPhoto}>
+            <Camera size={22} />
+            <span>
+              <strong>拍照</strong>
+              <small>使用手机相机，原图会保存到系统相册</small>
+            </span>
+            <ChevronRight size={18} />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setPhotoSourceOpen(false);
+              chatImageInputRef.current?.click();
+            }}
+          >
+            <Images size={22} />
+            <span>
+              <strong>从相册选择</strong>
+              <small>保留现有上传方式，选择手机中的照片</small>
+            </span>
+            <ChevronRight size={18} />
+          </button>
+        </div>
+      </Modal>
 
       <Drawer
         className={styles.chatHistoryDrawer}

@@ -2,21 +2,36 @@ package io.lensgo.macao.mobile.local
 
 import android.annotation.SuppressLint
 import android.Manifest
+import android.app.Activity
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.ClipData
+import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
 import android.speech.tts.TextToSpeech
+import android.util.Base64
 import android.webkit.JavascriptInterface
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.FileProvider
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -34,6 +49,9 @@ class LensGoTripBridge(
   private val locationManager =
     activity.getSystemService(LocationManager::class.java)
   private var locationUpdatesActive = false
+  private var pendingCameraFile: File? = null
+  private var pendingCameraUri: Uri? = null
+  private var pendingCameraName = ""
   @Volatile private var ttsReady = false
   private val locationListener = object : LocationListener {
     override fun onLocationChanged(location: Location) {
@@ -99,6 +117,216 @@ class LensGoTripBridge(
         locationManager.removeUpdates(locationListener)
         locationUpdatesActive = false
       }
+    }
+  }
+
+  /**
+   * Opens the phone camera and writes its full-size result directly into the
+   * public Pictures/LensGo gallery. A smaller preview is returned to the web UI
+   * only after the camera activity succeeds.
+   */
+  @JavascriptInterface
+  fun capturePhotoToGallery(): Boolean {
+    activity.runOnUiThread { startCameraCapture() }
+    return true
+  }
+
+  fun startCameraCaptureAfterPermission() {
+    activity.runOnUiThread { startCameraCapture() }
+  }
+
+  fun handleCameraResult(resultCode: Int) {
+    val file = pendingCameraFile ?: return
+    val cameraUri = pendingCameraUri
+    val name = pendingCameraName.ifEmpty { createCameraFileName() }
+    pendingCameraFile = null
+    pendingCameraUri = null
+    pendingCameraName = ""
+
+    if (resultCode != Activity.RESULT_OK && !hasCapturedData(file)) {
+      file.delete()
+      activity.dispatchCameraCancelledToWeb()
+      return
+    }
+
+    var savedToGallery = false
+    try {
+      saveCapturedPhotoToGallery(file, name)
+      savedToGallery = true
+      activity.dispatchCameraPhotoToWeb(name, encodePreviewDataUrl(file))
+    } catch (_: Exception) {
+      activity.dispatchCameraErrorToWeb(
+        if (savedToGallery) {
+          "照片已保存到系统相册，但无法载入对话，请从相册重新选择"
+        } else {
+          "照片保存失败，请重试或从相册选择"
+        },
+      )
+    } finally {
+      cameraUri?.let {
+        activity.revokeUriPermission(
+          it,
+          Intent.FLAG_GRANT_READ_URI_PERMISSION or
+            Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+        )
+      }
+      file.delete()
+    }
+  }
+
+  private fun startCameraCapture() {
+    if (pendingCameraFile != null) {
+      activity.dispatchCameraErrorToWeb("上一张照片仍在处理中，请稍候")
+      return
+    }
+    if (
+      Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+      ActivityCompat.checkSelfPermission(
+        activity,
+        Manifest.permission.WRITE_EXTERNAL_STORAGE,
+      ) != PackageManager.PERMISSION_GRANTED
+    ) {
+      ActivityCompat.requestPermissions(
+        activity,
+        arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
+        CAMERA_STORAGE_PERMISSION_REQUEST,
+      )
+      return
+    }
+
+    val name = createCameraFileName()
+    val cameraDirectory = File(activity.cacheDir, "camera").apply { mkdirs() }
+    val file = File(cameraDirectory, name)
+    if (file.exists()) file.delete()
+    if (!file.createNewFile()) {
+      activity.dispatchCameraErrorToWeb("无法创建拍照临时文件")
+      return
+    }
+    val uri = FileProvider.getUriForFile(
+      activity,
+      "${activity.packageName}.fileprovider",
+      file,
+    )
+
+    val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+      putExtra(MediaStore.EXTRA_OUTPUT, uri)
+      clipData = ClipData.newRawUri("LensGo photo", uri)
+      addFlags(
+        Intent.FLAG_GRANT_READ_URI_PERMISSION or
+          Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+      )
+    }
+    if (intent.resolveActivity(activity.packageManager) == null) {
+      file.delete()
+      activity.dispatchCameraErrorToWeb("手机上没有可用的相机应用")
+      return
+    }
+    val grants = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+      Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+    activity.packageManager.queryIntentActivities(intent, 0).forEach {
+      activity.grantUriPermission(it.activityInfo.packageName, uri, grants)
+    }
+
+    pendingCameraFile = file
+    pendingCameraUri = uri
+    pendingCameraName = name
+    try {
+      activity.launchCamera(intent)
+    } catch (_: Exception) {
+      pendingCameraFile = null
+      pendingCameraUri = null
+      pendingCameraName = ""
+      file.delete()
+      activity.dispatchCameraErrorToWeb("无法打开手机相机")
+    }
+  }
+
+  private fun createCameraFileName(): String =
+    "LensGo_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.jpg"
+
+  private fun hasCapturedData(file: File): Boolean = file.isFile && file.length() > 0
+
+  private fun saveCapturedPhotoToGallery(file: File, name: String): Uri {
+    val values = ContentValues().apply {
+      put(MediaStore.Images.Media.DISPLAY_NAME, name)
+      put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+      put(MediaStore.Images.Media.TITLE, name.substringBeforeLast('.'))
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        put(
+          MediaStore.Images.Media.RELATIVE_PATH,
+          "${Environment.DIRECTORY_PICTURES}/LensGo",
+        )
+        put(MediaStore.Images.Media.IS_PENDING, 1)
+      }
+    }
+    val uri = activity.contentResolver.insert(
+      MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+      values,
+    ) ?: throw IllegalStateException("gallery insert failed")
+    try {
+      activity.contentResolver.openOutputStream(uri, "w")?.use { output ->
+        file.inputStream().use { input -> input.copyTo(output) }
+      } ?: throw IllegalStateException("gallery output failed")
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        activity.contentResolver.update(
+          uri,
+          ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) },
+          null,
+          null,
+        )
+      }
+      return uri
+    } catch (error: Exception) {
+      activity.contentResolver.delete(uri, null, null)
+      throw error
+    }
+  }
+
+  private fun encodePreviewDataUrl(file: File): String {
+    val bitmap = decodePreviewBitmap(file)
+      ?: throw IllegalStateException("camera preview decode failed")
+    val output = ByteArrayOutputStream()
+    try {
+      if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 86, output)) {
+        throw IllegalStateException("camera preview compression failed")
+      }
+      return "data:image/jpeg;base64," +
+        Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)
+    } finally {
+      output.close()
+      bitmap.recycle()
+    }
+  }
+
+  private fun decodePreviewBitmap(file: File): Bitmap? {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+      val source = ImageDecoder.createSource(file)
+      return ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+        decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+        val width = info.size.width
+        val height = info.size.height
+        val largest = maxOf(width, height)
+        if (largest > CAMERA_PREVIEW_MAX_PX) {
+          val scale = CAMERA_PREVIEW_MAX_PX.toDouble() / largest.toDouble()
+          decoder.setTargetSize(
+            maxOf(1, (width * scale).toInt()),
+            maxOf(1, (height * scale).toInt()),
+          )
+        }
+      }
+    }
+
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    file.inputStream().use {
+      BitmapFactory.decodeStream(it, null, bounds)
+    }
+    var sampleSize = 1
+    while (maxOf(bounds.outWidth, bounds.outHeight) / sampleSize > CAMERA_PREVIEW_MAX_PX) {
+      sampleSize *= 2
+    }
+    val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+    return file.inputStream().use {
+      BitmapFactory.decodeStream(it, null, options)
     }
   }
 
@@ -214,6 +442,8 @@ class LensGoTripBridge(
     private const val CHANNEL_ID = "lensgo_trip_alerts"
     private const val NOTIFICATION_PERMISSION_REQUEST = 4102
     const val LOCATION_PERMISSION_REQUEST = 4103
+    const val CAMERA_STORAGE_PERMISSION_REQUEST = 4104
+    private const val CAMERA_PREVIEW_MAX_PX = 1600
     private const val LOCATION_INTERVAL_MS = 10_000L
     // Arrival requires consecutive fixes while the visitor stands at a stop.
     private const val LOCATION_DISTANCE_M = 0f

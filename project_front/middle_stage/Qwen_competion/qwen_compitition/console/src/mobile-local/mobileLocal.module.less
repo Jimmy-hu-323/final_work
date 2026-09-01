@@ -997,6 +997,48 @@
   }
 }
 
+.chatPhotoIntent {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 1px 0;
+
+  > span {
+    flex: 0 0 auto;
+    color: #817a74;
+    font-size: 10px;
+  }
+
+  > div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+
+  button {
+    padding: 4px 8px;
+    border: 1px solid #ded6ce;
+    border-radius: 999px;
+    color: #716861;
+    background: rgba(255, 255, 255, 0.82);
+    font: inherit;
+    font-size: 10px;
+    line-height: 1.2;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+
+  .chatPhotoIntentActive {
+    border-color: #de6c2d;
+    color: #b4470b;
+    background: #ffeadc;
+  }
+}
+
 .chatComposerFooter {
   display: flex;
   align-items: center;
@@ -1024,6 +1066,55 @@
 
   button {
     color: #716b66;
+  }
+}
+
+.chatPhotoSourceOptions {
+  display: grid;
+  gap: 10px;
+  padding-top: 4px;
+
+  > button {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 11px;
+    width: 100%;
+    padding: 13px;
+    border: 1px solid #ece4dc;
+    border-radius: 14px;
+    color: #4a423c;
+    background: #fffaf6;
+    font: inherit;
+    text-align: left;
+
+    > svg:first-child {
+      box-sizing: content-box;
+      padding: 9px;
+      border-radius: 12px;
+      color: #d95d16;
+      background: #ffeadc;
+    }
+
+    > svg:last-child {
+      color: #b0a59d;
+    }
+
+    > span {
+      display: grid;
+      gap: 3px;
+      min-width: 0;
+    }
+
+    strong {
+      font-size: 14px;
+    }
+
+    small {
+      color: #847a72;
+      font-size: 11px;
+      line-height: 1.45;
+    }
   }
 }
 

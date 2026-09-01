@@ -64,6 +64,7 @@ declare global {
       speakAndNotify: (title: string, message: string) => void;
       startLocationUpdates?: () => boolean;
       stopLocationUpdates?: () => void;
+      capturePhotoToGallery?: () => boolean;
     };
   }
 }
@@ -128,7 +129,12 @@ export function requestInitialTripPosition(
     }, timeoutMs);
     cleanup = startNativeLocationWatch(
       (position) => {
-        if (Date.now() - position.recordedAt > 30_000 || position.accuracy <= 0 || position.accuracy > 80) return;
+        if (
+          Date.now() - position.recordedAt > 30_000 ||
+          position.accuracy <= 0 ||
+          position.accuracy > 80
+        )
+          return;
         window.clearTimeout(timer);
         cleanup?.();
         resolve(position);
