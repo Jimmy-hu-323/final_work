@@ -22,6 +22,7 @@ type StreamRequest = {
   userId: string;
   deviceId: string;
   context?: string;
+  imageDataUrl?: string;
 };
 
 function textBlocks(content: unknown): string[] {
@@ -101,8 +102,8 @@ function activityFromEvent(
   const label = name
     ? `${object.includes("agent") ? "子 Agent" : "工具"}：${name}`
     : object.includes("agent")
-      ? "子 Agent 正在处理"
-      : "正在调用 Skill / MCP 工具";
+    ? "子 Agent 正在处理"
+    : "正在调用 Skill / MCP 工具";
   return { label, status: completed ? "completed" : "running" };
 }
 
@@ -239,6 +240,7 @@ export async function streamQwenPawChat(
         userId: request.userId,
         deviceId: request.deviceId,
         context: request.context || "",
+        imageDataUrl: request.imageDataUrl || "",
       },
     });
     if (remoteError) throw new Error(remoteError);

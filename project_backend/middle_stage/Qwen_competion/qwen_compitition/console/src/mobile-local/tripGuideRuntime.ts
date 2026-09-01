@@ -46,10 +46,11 @@ export async function replyToTripGuide(
   question: string | undefined,
   onText: (text: string) => void,
   onActivity?: (text: string) => void,
+  photo?: { dataUrl: string; name: string },
 ): Promise<string> {
   const guide = session.guide!;
   question = question ? guideQuestion(question) : undefined;
-  const kind = question ? nearbyGuideKind(question) : null;
+  const kind = photo ? null : question ? nearbyGuideKind(question) : null;
   const trip = loadTrips().find((item) => item.id === guide.tripId);
   if (kind) {
     onActivity?.("正在搜索附近地点…");
@@ -74,14 +75,22 @@ export async function replyToTripGuide(
   const context = JSON.stringify({
     task: "attraction_guide",
     attraction: { name: guide.stopName, day: guide.day },
+    uploadedPhoto: photo
+      ? {
+          fileName: photo.name,
+          userQuestion: question,
+          currentSite: guide.stopName,
+        }
+      : undefined,
     nextStop: nextStop
       ? { name: nextStop.name, time: nextStop.time, note: nextStop.note }
       : undefined,
-    instruction:
-      "仅作景点讲解。不要写入旅程、费用或相册；未提供的实时信息不能编造。",
+    instruction: photo
+      ? "仅作现场照片与景点讲解。先结合当前景点、当前对话和图片判断用户所指对象。只有能可靠识别时才说明名称、依据和文化背景；若对象、细节或对应文物不明确，只问一个简短澄清问题，不先给事实结论，等用户澄清后再回答。不要写入旅程、费用或相册；未提供的实时信息不能编造。"
+      : "仅作景点讲解。不要写入旅程、费用或相册；未提供的实时信息不能编造。",
   });
   const raw =
-    session.model === QWENPAW_MODEL_ID
+    session.model === QWENPAW_MODEL_ID || photo
       ? await streamQwenPawChat(
           {
             text: prompt,
@@ -89,6 +98,7 @@ export async function replyToTripGuide(
             userId: mobileDeviceId(),
             deviceId: mobileDeviceId(),
             context,
+            imageDataUrl: photo?.dataUrl,
           },
           {
             onText: (text) => onText(stripAgentControlContent(text)),
@@ -113,7 +123,7 @@ export async function replyToTripGuide(
         ).content;
   const visible = stripAgentControlContent(raw).trim();
   if (!visible) throw new Error("景点讲解没有返回正文，请回复“重试讲解”。");
-  return `${visible}\n\n${GUIDE_FOLLOW_UP}`;
+  return photo ? visible : `${visible}\n\n${GUIDE_FOLLOW_UP}`;
 }
 
 async function tellArrivalStory(session: LocalChatSession) {

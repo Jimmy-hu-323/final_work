@@ -115,6 +115,7 @@ pub struct QwenPawChatRequest {
     user_id: String,
     device_id: String,
     context: Option<String>,
+    image_data_url: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -829,10 +830,20 @@ pub async fn mobile_qwenpaw_chat(
             request.device_id, context, request.text
         )
     };
+    let mut content = vec![json!({"type": "text", "text": text})];
+    if let Some(image_data_url) = request
+        .image_data_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        decode_image_data_url(image_data_url)?;
+        content.push(json!({"type": "image", "image_url": image_data_url}));
+    }
     let body = json!({
         "input": [{
             "role": "user",
-            "content": [{"type": "text", "text": text}]
+            "content": content
         }],
         "session_id": request.session_id,
         "chat_id": request.session_id,

@@ -722,7 +722,9 @@ export async function analyzeAlbumImage(
   });
 }
 
-async function prepareImageForAnalysis(dataUrl: string): Promise<string> {
+export async function prepareImageForAnalysis(
+  dataUrl: string,
+): Promise<string> {
   const image = new Image();
   image.decoding = "async";
   await new Promise<void>((resolve, reject) => {

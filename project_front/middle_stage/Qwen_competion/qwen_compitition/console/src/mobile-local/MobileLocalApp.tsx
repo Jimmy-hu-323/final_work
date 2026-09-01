@@ -102,6 +102,7 @@ import {
   locationLabel,
   putAlbumItem,
   putChatMediaItem,
+  prepareImageForAnalysis,
   saveMemory,
   saveMessages,
   saveMobileSettings,
@@ -911,6 +912,7 @@ function LocalChatPage({
   const [pendingImage, setPendingImage] = useState<{
     name: string;
     dataUrl: string;
+    analysisDataUrl: string;
   } | null>(null);
   const [apiModels, setApiModels] = useState<string[]>(
     settings?.model ? [settings.model] : [],
@@ -1037,10 +1039,16 @@ function LocalChatPage({
   const send = async (preset?: string) => {
     const sourceImage = pendingImage;
     const text = (preset ?? input).trim();
-    if ((!text && !sourceImage) || sending) return;
-    const visibleText =
-      text || "请保持现场背景不变，生成自然的旅行拍照姿势效果预览。";
-    const imageTask = Boolean(sourceImage) || POSE_PREVIEW_PATTERN.test(text);
+    if (sending) return;
+    if (sourceImage && !text) {
+      message.info("请先描述你想了解的内容，再点击发送");
+      return;
+    }
+    if (!text) return;
+    const visibleText = text;
+    const photoTask = Boolean(sourceImage);
+    const imageTask = !photoTask && POSE_PREVIEW_PATTERN.test(text);
+    const useQwenPaw = qwenpawSelected || photoTask;
     const navigationIntent = sourceImage
       ? null
       : parseChatNavigationIntent(text);
@@ -1057,6 +1065,11 @@ function LocalChatPage({
       navigate("/local/settings");
       return;
     }
+    if (photoTask && !qwenpawConfigured) {
+      message.warning("请先配置 QwenPaw 服务，照片讲解需要连接主智能体");
+      navigate("/local/settings");
+      return;
+    }
     if (navigationIntent && !qwenpawConfigured) {
       message.warning("请先配置 QwenPaw 服务，实时导航需要连接地图后端");
       navigate("/local/settings");
@@ -1064,6 +1077,7 @@ function LocalChatPage({
     }
     if (
       !imageTask &&
+      !photoTask &&
       !navigationIntent &&
       (qwenpawSelected ? !qwenpawConfigured : !fallbackConfigured)
     ) {
@@ -1101,6 +1115,10 @@ function LocalChatPage({
     setAgentActivity(
       navigationIntent
         ? "正在获取本次导航所需的手机位置…"
+        : photoTask
+        ? activeSession?.guide
+          ? `正在结合${activeSession.guide.stopName}识别照片…`
+          : "正在结合当前位置和对话识别照片…"
         : imageTask
         ? sourceMedia
           ? "正在保持现场背景并合成人物姿势…"
@@ -1205,6 +1223,12 @@ function LocalChatPage({
               ),
             ),
           setAgentActivity,
+          sourceImage
+            ? {
+                dataUrl: sourceImage.analysisDataUrl,
+                name: sourceImage.name,
+              }
+            : undefined,
         );
         setMessages((current) =>
           current.map((item) =>
@@ -1226,7 +1250,7 @@ function LocalChatPage({
       // The legacy direct-model fallback may search the on-device album.
       // QwenPaw mode deliberately skips this branch: local-only photos must
       // remain invisible to the main agent until the user uploads them.
-      if (!qwenpawSelected && PHOTO_SEARCH_PATTERN.test(text)) {
+      if (!useQwenPaw && PHOTO_SEARCH_PATTERN.test(text)) {
         const currentAlbum = await listAlbumItems();
         setAlbumItems(currentAlbum);
         if (!currentAlbum.length) {
@@ -1270,7 +1294,7 @@ function LocalChatPage({
         return;
       }
       const memory = loadMemory().trim();
-      if (qwenpawSelected) {
+      if (useQwenPaw) {
         const serverTripBefore = await fetchQwenPawLatestItinerary().catch(
           () => null,
         );
@@ -1326,8 +1350,33 @@ function LocalChatPage({
                 }
               : undefined,
           cloudAlbum,
+          uploadedPhoto: sourceImage
+            ? {
+                fileName: sourceImage.name,
+                userQuestion: text,
+                currentGuideSite: activeSession?.guide?.stopName,
+                currentTrip:
+                  activeTrip && privacy.shareTripsWithAgent
+                    ? {
+                        id: activeTrip.id,
+                        title: activeTrip.title,
+                        currentStop:
+                          activeTrip.stops?.[activeTrip.currentStopIndex || 0]
+                            ?.name,
+                        latestPosition:
+                          activeTrip.lastPosition &&
+                          isFreshGuidePosition(activeTrip.lastPosition)
+                            ? activeTrip.lastPosition
+                            : undefined,
+                      }
+                    : undefined,
+              }
+            : undefined,
           instruction:
-            "只能使用本上下文中的旅程和 cloudAlbum；不得声称能看到未同步的本地照片。conversationTrip 存在时只能修改它指定的 tripId，不得创建另一份行程。需要规划或修改路线时使用已配置的澳门旅行 Skill、MCP 和子 Agent。用户确认最终规划后，必须按 Skill 的 LensGo 手机端桥接协议，在回复末尾输出包含完整 stops、高德坐标和逐项 expenses 预算的 lensgo-trip-update 代码块。",
+            (sourceImage
+              ? "用户已明确上传本次消息中的照片，可以分析这张照片，但不能访问其他未同步本地照片。结合用户问题、当前地点、当前景点讲解和对话上下文识别画面中的建筑、文物或细节。只有能可靠识别时才给出名称、视觉依据、与当前景点的关系和文化讲解；如果图片模糊、对象有多个、局部特征不足或无法可靠匹配，只问一个简短而具体的澄清问题，不要先给事实结论，等待用户澄清后再回答。"
+              : "只能使用本上下文中的旅程和 cloudAlbum；不得声称能看到未同步的本地照片。") +
+            " conversationTrip 存在时只能修改它指定的 tripId，不得创建另一份行程。需要规划或修改路线时使用已配置的澳门旅行 Skill、MCP 和子 Agent。用户确认最终规划后，必须按 Skill 的 LensGo 手机端桥接协议，在回复末尾输出包含完整 stops、高德坐标和逐项 expenses 预算的 lensgo-trip-update 代码块。",
         });
         const assistantId = createId("message");
         setMessages((current) => [
@@ -1347,6 +1396,7 @@ function LocalChatPage({
             userId: mobileDeviceId(),
             deviceId: mobileDeviceId(),
             context,
+            imageDataUrl: sourceImage?.analysisDataUrl,
           },
           {
             onText: (content) =>
@@ -1543,10 +1593,12 @@ function LocalChatPage({
     const file = files?.[0];
     if (!file) return;
     try {
-      setPendingImage({ name: file.name, dataUrl: await fileToDataUrl(file) });
-      if (!input.trim()) {
-        setInput("请保持现场背景不变，在合适位置加入一位自然摆姿势的游客。");
-      }
+      const dataUrl = await fileToDataUrl(file);
+      setPendingImage({
+        name: file.name,
+        dataUrl,
+        analysisDataUrl: await prepareImageForAnalysis(dataUrl),
+      });
     } catch (error) {
       message.error(errorText(error));
     } finally {
@@ -1913,7 +1965,7 @@ function LocalChatPage({
             <img src={pendingImage.dataUrl} alt={pendingImage.name} />
             <div>
               <strong>{pendingImage.name}</strong>
-              <span>将保留这张图的背景，合成人物与拍照姿势</span>
+              <span>图片已选择；描述你想了解的内容后再发送</span>
             </div>
             <Button
               type="text"
@@ -1929,7 +1981,7 @@ function LocalChatPage({
           onChange={(event) => setInput(event.target.value)}
           autoSize={{ minRows: 2, maxRows: 5 }}
           maxLength={10000}
-          placeholder="输入消息，或上传现场照片生成拍照效果…"
+          placeholder="输入消息；也可先上传照片，再描述想了解的内容…"
           onPressEnter={(event) => {
             if (!event.shiftKey) {
               event.preventDefault();
@@ -1955,7 +2007,7 @@ function LocalChatPage({
             shape="circle"
             icon={<Send size={18} />}
             loading={sending}
-            disabled={!input.trim() && !pendingImage}
+            disabled={!input.trim()}
             aria-label="发送消息"
             onClick={() => void send()}
           />
