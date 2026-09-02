@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
-from . import seed_data
+from . import bus_seed_data, seed_data
 from .config import LEVELS, derive_crowd_level
 from .db import connect
 from .geo import to_gcj02
@@ -747,6 +747,314 @@ class Store:
             ).fetchall()
         return {"region": region, "items": [dict(row) for row in rows]}
 
+    # ── 模拟巴士报站 ──────────────────────────────────────────────────
+    @staticmethod
+    def _bus_route_with_stops(connection: sqlite3.Connection, row: sqlite3.Row) -> dict:
+        route = dict(row)
+        route["active"] = bool(route["active"])
+        stops = connection.execute(
+            """SELECT s.stop_id, s.name, s.name_en, s.center_lng, s.center_lat,
+                      rs.stop_sequence, rs.minutes_from_start
+               FROM bus_route_stops rs
+               JOIN bus_stops s ON s.stop_id = rs.stop_id
+               WHERE rs.route_id = ? ORDER BY rs.stop_sequence""",
+            (route["route_id"],),
+        ).fetchall()
+        route["stops"] = [
+            {
+                "stop_id": stop["stop_id"],
+                "name": stop["name"],
+                "name_en": stop["name_en"],
+                "center": [stop["center_lng"], stop["center_lat"]],
+                "stop_sequence": stop["stop_sequence"],
+                "minutes_from_start": stop["minutes_from_start"],
+                "coord_system": "gcj02",
+            }
+            for stop in stops
+        ]
+        route["stop_count"] = len(route["stops"])
+        return route
+
+    def list_bus_routes(self, *, route_id: str = "") -> dict:
+        with self._session() as connection:
+            if route_id:
+                rows = connection.execute(
+                    "SELECT * FROM bus_routes WHERE route_id = ? AND active = 1",
+                    (route_id,),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT * FROM bus_routes WHERE active = 1 ORDER BY route_no, direction"
+                ).fetchall()
+            routes = [self._bus_route_with_stops(connection, row) for row in rows]
+        if route_id and not routes:
+            raise NotFoundError(f"巴士路线不存在: {route_id}")
+        return {
+            "generated_at": utc_now(),
+            "source": "mock",
+            "disclaimer": "模拟数据，仅用于 LensGo 功能演示，不可作为实际乘车依据。",
+            "count": len(routes),
+            "items": routes,
+        }
+
+    @staticmethod
+    def _enrich_bus_vehicle(
+        connection: sqlite3.Connection, row: sqlite3.Row
+    ) -> dict:
+        route_row = connection.execute(
+            "SELECT * FROM bus_routes WHERE route_id = ?", (row["route_id"],)
+        ).fetchone()
+        if route_row is None:
+            raise NotFoundError(f"巴士路线不存在: {row['route_id']}")
+        route = Store._bus_route_with_stops(connection, route_row)
+        stops = route["stops"]
+        sequence = int(row["current_stop_sequence"])
+        current = stops[sequence]
+        following = stops[sequence + 1] if sequence + 1 < len(stops) else None
+        progress = float(row["progress"])
+
+        if following:
+            segment_minutes = max(
+                0.1,
+                float(following["minutes_from_start"]) - float(current["minutes_from_start"]),
+            )
+            eta_next = max(
+                0, int(segment_minutes * (1 - progress) + int(row["delay_minutes"]) + 0.999)
+            )
+            position = [
+                current["center"][0] + (following["center"][0] - current["center"][0]) * progress,
+                current["center"][1] + (following["center"][1] - current["center"][1]) * progress,
+            ]
+        else:
+            eta_next = 0
+            position = list(current["center"])
+
+        return {
+            "vehicle_id": row["vehicle_id"],
+            "display_name": row["display_name"] or row["vehicle_id"],
+            "route_id": row["route_id"],
+            "route_no": route["route_no"],
+            "direction": route["direction"],
+            "destination": route["destination"],
+            "color": route["color"],
+            "current_stop_sequence": sequence,
+            "current_stop": current,
+            "next_stop": following,
+            "progress": progress,
+            "remaining_stops": max(0, len(stops) - sequence - 1),
+            "eta_to_next_stop_minutes": eta_next,
+            "position": position,
+            "coord_system": "gcj02",
+            "status": row["status"],
+            "occupancy_level": int(row["occupancy_level"]),
+            "delay_minutes": int(row["delay_minutes"]),
+            "speed_kmh": float(row["speed_kmh"]),
+            "observed_at": row["observed_at"],
+            "updated_at": row["updated_at"],
+            "source": row["source"],
+        }
+
+    def publish_bus_vehicle(self, payload: dict) -> dict:
+        vehicle_id = str(payload.get("vehicle_id") or "").strip()
+        route_id = str(payload.get("route_id") or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9._-]{2,64}", vehicle_id):
+            raise ValidationError("vehicle_id 需为 2~64 位字母、数字、点、下划线或连字符")
+        if not route_id:
+            raise ValidationError("缺少 route_id")
+
+        try:
+            sequence = int(payload.get("current_stop_sequence", 0))
+            progress = float(payload.get("progress", 0))
+            occupancy = int(payload.get("occupancy_level", 0))
+            delay = int(payload.get("delay_minutes", 0))
+            speed = float(payload.get("speed_kmh", 0))
+        except (TypeError, ValueError) as error:
+            raise ValidationError("站点序号、进度、拥挤度、延误和速度必须是数字") from error
+
+        status = str(payload.get("status") or "running").strip()
+        allowed_statuses = ("running", "at_stop", "paused", "out_of_service")
+        if status not in allowed_statuses:
+            raise ValidationError(f"status 必须是 {'/'.join(allowed_statuses)} 之一")
+        if not 0 <= progress <= 1:
+            raise ValidationError("progress 必须在 0~1 之间")
+        if not 0 <= occupancy <= 4:
+            raise ValidationError("occupancy_level 必须在 0~4 之间")
+        if not -30 <= delay <= 180:
+            raise ValidationError("delay_minutes 必须在 -30~180 之间")
+        if not 0 <= speed <= 120:
+            raise ValidationError("speed_kmh 必须在 0~120 之间")
+
+        observed_at = _parse_timestamp(payload.get("observed_at"))
+        created_at = utc_now()
+        display_name = str(payload.get("display_name") or "").strip() or None
+        with self._session() as connection:
+            route = connection.execute(
+                "SELECT route_id FROM bus_routes WHERE route_id = ? AND active = 1", (route_id,)
+            ).fetchone()
+            if route is None:
+                raise ValidationError(f"巴士路线不存在: {route_id}")
+            stop_count = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM bus_route_stops WHERE route_id = ?", (route_id,)
+                ).fetchone()[0]
+            )
+            if sequence < 0 or sequence >= stop_count:
+                raise ValidationError(f"current_stop_sequence 必须在 0~{stop_count - 1} 之间")
+            if sequence == stop_count - 1 and progress != 0:
+                raise ValidationError("终点站 progress 必须为 0")
+
+            values = (
+                vehicle_id, route_id, display_name, sequence, progress, status,
+                occupancy, delay, speed, observed_at, created_at,
+            )
+            connection.execute(
+                """INSERT INTO bus_vehicles
+                       (vehicle_id, route_id, display_name, current_stop_sequence, progress,
+                        status, occupancy_level, delay_minutes, speed_kmh, observed_at,
+                        updated_at, source)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'mock')
+                   ON CONFLICT(vehicle_id) DO UPDATE SET
+                       route_id = excluded.route_id,
+                       display_name = excluded.display_name,
+                       current_stop_sequence = excluded.current_stop_sequence,
+                       progress = excluded.progress,
+                       status = excluded.status,
+                       occupancy_level = excluded.occupancy_level,
+                       delay_minutes = excluded.delay_minutes,
+                       speed_kmh = excluded.speed_kmh,
+                       observed_at = excluded.observed_at,
+                       updated_at = excluded.updated_at,
+                       source = 'mock'""",
+                values,
+            )
+            connection.execute(
+                """INSERT INTO bus_vehicle_readings
+                       (vehicle_id, route_id, current_stop_sequence, progress, status,
+                        occupancy_level, delay_minutes, speed_kmh, observed_at, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    vehicle_id, route_id, sequence, progress, status, occupancy,
+                    delay, speed, observed_at, created_at,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM bus_vehicles WHERE vehicle_id = ?", (vehicle_id,)
+            ).fetchone()
+            connection.commit()
+            assert row is not None
+            result = self._enrich_bus_vehicle(connection, row)
+        return result
+
+    def list_bus_vehicles(
+        self, *, route_id: str = "", include_inactive: bool = False
+    ) -> dict:
+        where: list[str] = []
+        params: list[Any] = []
+        if route_id:
+            where.append("route_id = ?")
+            params.append(route_id)
+        if not include_inactive:
+            where.append("status != 'out_of_service'")
+        clause = f" WHERE {' AND '.join(where)}" if where else ""
+        with self._session() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM bus_vehicles{clause} ORDER BY route_id, vehicle_id", params
+            ).fetchall()
+            items = [self._enrich_bus_vehicle(connection, row) for row in rows]
+        return {
+            "generated_at": utc_now(),
+            "source": "mock",
+            "disclaimer": "模拟数据，仅用于 LensGo 功能演示，不可作为实际乘车依据。",
+            "count": len(items),
+            "items": items,
+        }
+
+    def bus_arrivals(self, stop_id: str, *, route_id: str = "") -> dict:
+        stop_id = stop_id.strip()
+        if not stop_id:
+            raise ValidationError("缺少 stop_id")
+        with self._session() as connection:
+            stop_row = connection.execute(
+                "SELECT * FROM bus_stops WHERE stop_id = ?", (stop_id,)
+            ).fetchone()
+            if stop_row is None:
+                raise NotFoundError(f"巴士站不存在: {stop_id}")
+            vehicle_rows = connection.execute(
+                "SELECT * FROM bus_vehicles WHERE status != 'out_of_service'"
+                + (" AND route_id = ?" if route_id else "")
+                + " ORDER BY route_id, vehicle_id",
+                (route_id,) if route_id else (),
+            ).fetchall()
+            arrivals = []
+            for vehicle_row in vehicle_rows:
+                target = connection.execute(
+                    """SELECT stop_sequence, minutes_from_start FROM bus_route_stops
+                       WHERE route_id = ? AND stop_id = ?""",
+                    (vehicle_row["route_id"], stop_id),
+                ).fetchone()
+                if target is None:
+                    continue
+                current_sequence = int(vehicle_row["current_stop_sequence"])
+                target_sequence = int(target["stop_sequence"])
+                if target_sequence < current_sequence:
+                    continue
+                route_row = connection.execute(
+                    "SELECT * FROM bus_routes WHERE route_id = ?", (vehicle_row["route_id"],)
+                ).fetchone()
+                assert route_row is not None
+                route = self._bus_route_with_stops(connection, route_row)
+                current = route["stops"][current_sequence]
+                progress = float(vehicle_row["progress"])
+                if target_sequence == current_sequence:
+                    eta = 0 if progress == 0 else None
+                else:
+                    following = route["stops"][current_sequence + 1]
+                    segment_minutes = float(following["minutes_from_start"]) - float(
+                        current["minutes_from_start"]
+                    )
+                    current_minutes = float(current["minutes_from_start"]) + progress * segment_minutes
+                    eta = max(
+                        0,
+                        int(
+                            float(target["minutes_from_start"])
+                            - current_minutes
+                            + int(vehicle_row["delay_minutes"])
+                            + 0.999
+                        ),
+                    )
+                if eta is None:
+                    continue
+                arrivals.append(
+                    {
+                        "vehicle_id": vehicle_row["vehicle_id"],
+                        "route_id": route["route_id"],
+                        "route_no": route["route_no"],
+                        "direction": route["direction"],
+                        "destination": route["destination"],
+                        "eta_minutes": eta,
+                        "stops_away": max(0, target_sequence - current_sequence),
+                        "occupancy_level": int(vehicle_row["occupancy_level"]),
+                        "delay_minutes": int(vehicle_row["delay_minutes"]),
+                        "status": vehicle_row["status"],
+                        "observed_at": vehicle_row["observed_at"],
+                        "source": "mock",
+                    }
+                )
+            arrivals.sort(key=lambda item: (item["eta_minutes"], item["route_no"]))
+        return {
+            "generated_at": utc_now(),
+            "source": "mock",
+            "disclaimer": "模拟到站预测，仅用于 LensGo 功能演示，不可作为实际乘车依据。",
+            "stop": {
+                "stop_id": stop_row["stop_id"],
+                "name": stop_row["name"],
+                "center": [stop_row["center_lng"], stop_row["center_lat"]],
+                "coord_system": "gcj02",
+            },
+            "count": len(arrivals),
+            "items": arrivals,
+        }
+
     def stats(self) -> dict:
         with self._session() as connection:
             def scalar(sql: str) -> int:
@@ -760,6 +1068,9 @@ class Store:
                 "pois": scalar("SELECT COUNT(*) FROM regions WHERE level = 'poi'"),
                 "readings": scalar("SELECT COUNT(*) FROM readings"),
                 "batches": scalar("SELECT COUNT(*) FROM batches WHERE status = 'published'"),
+                "bus_routes": scalar("SELECT COUNT(*) FROM bus_routes WHERE active = 1"),
+                "bus_stops": scalar("SELECT COUNT(*) FROM bus_stops"),
+                "bus_vehicles": scalar("SELECT COUNT(*) FROM bus_vehicles"),
             }
 
     # ── 初始化 ──────────────────────────────────────────────────────────
@@ -840,6 +1151,63 @@ class Store:
                 inserted_regions += 1
             connection.commit()
         return {"cities": inserted_cities, "regions": inserted_regions, "reset": reset}
+
+    def seed_bus(self, *, reset: bool = False) -> dict:
+        """幂等写入澳门巴士演示路线。不会覆盖发布过的车辆状态。"""
+        created_at = utc_now()
+        inserted_routes = 0
+        inserted_stops = 0
+        with self._session() as connection:
+            if reset:
+                connection.execute("DELETE FROM bus_vehicle_readings")
+                connection.execute("DELETE FROM bus_vehicles")
+                connection.execute("DELETE FROM bus_route_stops")
+                connection.execute("DELETE FROM bus_stops")
+                connection.execute("DELETE FROM bus_routes")
+
+            for route in bus_seed_data.ROUTES:
+                exists = connection.execute(
+                    "SELECT 1 FROM bus_routes WHERE route_id = ?", (route["route_id"],)
+                ).fetchone()
+                if exists is None:
+                    connection.execute(
+                        """INSERT INTO bus_routes
+                               (route_id, route_no, direction, origin, destination, operator,
+                                color, source, active, created_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, 'mock', 1, ?)""",
+                        (
+                            route["route_id"], route["route_no"], route["direction"],
+                            route["origin"], route["destination"], route.get("operator"),
+                            route.get("color"), created_at,
+                        ),
+                    )
+                    inserted_routes += 1
+
+                for sequence, stop in enumerate(route["stops"]):
+                    stop_id, name, wgs_lng, wgs_lat, minutes_from_start = stop
+                    if connection.execute(
+                        "SELECT 1 FROM bus_stops WHERE stop_id = ?", (stop_id,)
+                    ).fetchone() is None:
+                        lng, lat = to_gcj02(wgs_lng, wgs_lat, "wgs84")
+                        connection.execute(
+                            """INSERT INTO bus_stops
+                                   (stop_id, name, name_en, center_lng, center_lat, source, created_at)
+                               VALUES (?, ?, NULL, ?, ?, 'mock', ?)""",
+                            (stop_id, name, lng, lat, created_at),
+                        )
+                        inserted_stops += 1
+                    connection.execute(
+                        """INSERT OR IGNORE INTO bus_route_stops
+                               (route_id, stop_id, stop_sequence, minutes_from_start)
+                           VALUES (?, ?, ?, ?)""",
+                        (route["route_id"], stop_id, sequence, minutes_from_start),
+                    )
+            connection.commit()
+        return {
+            "routes": inserted_routes,
+            "stops": inserted_stops,
+            "reset": reset,
+        }
 
 
 def _rough_distance_m(lng1: float, lat1: float, lng2: float, lat2: float) -> float:

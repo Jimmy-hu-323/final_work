@@ -14,7 +14,7 @@ from functools import lru_cache
 from pathlib import Path
 from urllib.parse import quote
 from urllib.parse import urlencode
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 import httpx
 from fastapi import APIRouter, Body, File, HTTPException, Query, UploadFile
@@ -52,6 +52,111 @@ _CHAT_ROUTE_MODES = {"transit", "driving", "walking"}
 _route_cache_lock = threading.Lock()
 _navigation_amap_lock = threading.Lock()
 _local_album_lock = threading.Lock()
+
+
+def _crowd_base_url() -> str:
+    return os.getenv("LENSGO_CROWD_BASE_URL", "http://127.0.0.1:18099").strip().rstrip("/")
+
+
+def _publisher_json(path: str) -> dict:
+    headers = {"Accept": "application/json"}
+    token = (
+        os.getenv("LENSGO_CROWD_API_KEY", "").strip()
+        or os.getenv("LENSGO_CROWD_READ_TOKEN", "").strip()
+    )
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = Request(f"{_crowd_base_url()}{path}", headers=headers, method="GET")
+    with urlopen(request, timeout=2.5) as response:
+        payload = json.loads(response.read(2_000_000))
+    if not isinstance(payload, dict):
+        raise RuntimeError("publisher response is not an object")
+    return payload
+
+
+_BUS_NAME_TRANSLATION = str.maketrans(
+    "媽閣關閘總亞馬喇氹仔灣鴿巢筷環連貫邊凱滩樞紐",
+    "妈阁关闸总亚马喇凼仔湾鸽巢筷环连贯边凯滩枢纽",
+)
+
+
+def _normalized_bus_name(value: object) -> str:
+    text = str(value or "").translate(_BUS_NAME_TRANSLATION).casefold()
+    return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", text).replace("巴士站", "").replace("公交站", "")
+
+
+def _bus_route_number(value: object) -> str:
+    match = re.search(r"(?<!\d)(\d{1,3}[A-Za-z]?)(?!\d)", str(value or ""))
+    return match.group(1).upper() if match else ""
+
+
+def _attach_mock_bus_reports(transit_options: list[dict]) -> None:
+    """Best-effort enrichment. Failure must never break AMap navigation."""
+    try:
+        routes_payload = _publisher_json("/api/bus/routes")
+        routes = [item for item in routes_payload.get("items", []) if isinstance(item, dict)]
+    except Exception:
+        return
+    routes_by_no: dict[str, list[dict]] = {}
+    for route in routes:
+        number = _bus_route_number(route.get("route_no"))
+        if number:
+            routes_by_no.setdefault(number, []).append(route)
+
+    for option in transit_options:
+        legs = option.get("legs") if isinstance(option.get("legs"), list) else []
+        for leg in legs:
+            if not isinstance(leg, dict) or leg.get("kind") != "bus":
+                continue
+            candidates = routes_by_no.get(_bus_route_number(leg.get("line")), [])
+            target_name = _normalized_bus_name(leg.get("fromStop"))
+            if not candidates or not target_name:
+                continue
+            matched_route = None
+            matched_stop = None
+            for route in candidates:
+                stops = route.get("stops") if isinstance(route.get("stops"), list) else []
+                for stop in stops:
+                    if not isinstance(stop, dict):
+                        continue
+                    stop_name = _normalized_bus_name(stop.get("name"))
+                    if stop_name and (target_name in stop_name or stop_name in target_name):
+                        matched_route, matched_stop = route, stop
+                        break
+                if matched_stop:
+                    break
+            if not matched_route or not matched_stop:
+                continue
+            try:
+                arrivals = _publisher_json(
+                    "/api/bus/stops/"
+                    f"{quote(str(matched_stop['stop_id']), safe='')}/arrivals?"
+                    f"route_id={quote(str(matched_route['route_id']), safe='')}"
+                )
+            except Exception:
+                continue
+            items = [item for item in arrivals.get("items", []) if isinstance(item, dict)]
+            if not items:
+                continue
+            leg["busReport"] = {
+                "dataType": "mock",
+                "source": "LensGo 模拟巴士发布器",
+                "disclaimer": "模拟报站，仅用于功能演示，不可作为实际乘车依据。",
+                "stopName": matched_stop.get("name"),
+                "routeNo": matched_route.get("route_no"),
+                "generatedAt": arrivals.get("generated_at"),
+                "arrivals": [
+                    {
+                        "vehicleId": item.get("vehicle_id"),
+                        "etaMinutes": item.get("eta_minutes"),
+                        "stopsAway": item.get("stops_away"),
+                        "occupancyLevel": item.get("occupancy_level"),
+                        "delayMinutes": item.get("delay_minutes"),
+                        "observedAt": item.get("observed_at"),
+                    }
+                    for item in items[:3]
+                ],
+            }
 
 
 @lru_cache(maxsize=1)
@@ -812,6 +917,8 @@ def _fetch_chat_navigation(
             path["steps"] = normalized_steps
     if path is None:
         return {"available": False, "reason": "已经找到目的地，但高德地图暂时没有返回可用路线。"}
+    if mode == "transit":
+        _attach_mock_bus_reports(path.get("transitOptions", []))
     name = poi.get("name") if isinstance(poi.get("name"), str) else destination
     address = poi.get("address") if isinstance(poi.get("address"), str) else ""
     return {

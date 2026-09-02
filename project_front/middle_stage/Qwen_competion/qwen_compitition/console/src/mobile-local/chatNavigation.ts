@@ -91,9 +91,19 @@ function formatTransitOptions(
       const currentRide = rideIndex++;
       const action = currentRide ? "换乘" : "上车乘坐";
       const stopCount = leg.viaStops ? `，途经约 ${leg.viaStops} 站` : "";
-      return `在 **${markdownText(leg.fromStop || "上车站")}** ${action} **${markdownText(
+      const instruction = `在 **${markdownText(leg.fromStop || "上车站")}** ${action} **${markdownText(
         leg.line || (leg.kind === "railway" ? "轨道交通" : "公交车"),
       )}**，到 **${markdownText(leg.toStop || "下车站")}** 下车${stopCount}`;
+      const arrivals = leg.busReport?.arrivals || [];
+      if (!arrivals.length) return instruction;
+      const occupancyLabels = ["空闲", "较少", "适中", "拥挤", "非常拥挤"];
+      const reports = arrivals.slice(0, 2).map((arrival) => {
+        const eta = Math.max(0, Math.round(arrival.etaMinutes || 0));
+        const stopsAway = Math.max(0, Math.round(arrival.stopsAway || 0));
+        const occupancy = occupancyLabels[arrival.occupancyLevel ?? -1] || "未知";
+        return `${markdownText(arrival.vehicleId || "演示车辆")}：约 ${eta} 分钟，${stopsAway} 站，车内${occupancy}`;
+      });
+      return `${instruction}\n   - **预计到站**：${reports.join("；")}`;
     });
     return `### 方案 ${optionIndex + 1}${optionIndex === 0 ? "（推荐）" : ""}\n\n- 总耗时：约 ${durationLabel(
       option.durationSeconds,

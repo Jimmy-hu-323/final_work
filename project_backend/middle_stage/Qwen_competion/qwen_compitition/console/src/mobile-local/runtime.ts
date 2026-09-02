@@ -217,6 +217,22 @@ export type ChatNavigationResponse = {
       durationSeconds?: number;
       distanceMeters?: number;
       viaStops?: number;
+      busReport?: {
+        dataType: "mock";
+        source: string;
+        disclaimer: string;
+        stopName?: string;
+        routeNo?: string;
+        generatedAt?: string;
+        arrivals: Array<{
+          vehicleId?: string;
+          etaMinutes?: number;
+          stopsAway?: number;
+          occupancyLevel?: number;
+          delayMinutes?: number;
+          observedAt?: string;
+        }>;
+      };
     }>;
   }>;
   source?: string;

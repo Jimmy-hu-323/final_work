@@ -378,6 +378,88 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 .stale { color: var(--level-3); }
 
+/* ── 模拟巴士报站 ───────────────────────────────────────────────── */
+.bus-disclaimer {
+  margin-bottom: 16px;
+  border-color: #f59e0b;
+  background: color-mix(in srgb, #f59e0b 10%, var(--panel));
+}
+
+.bus-cols { grid-template-columns: minmax(420px, 1.05fr) minmax(320px, .95fr); }
+
+.bus-simulator-box {
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 11px 12px 2px;
+  margin: 12px 0;
+  background: var(--panel-2);
+}
+
+.bus-simulator-box > strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.bus-actions { margin-bottom: 0; }
+
+.bus-running {
+  color: #15803d;
+  border-color: #22c55e;
+  background: color-mix(in srgb, #22c55e 10%, var(--panel));
+}
+
+.bus-route-summary {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+
+.bus-stop-list {
+  list-style: none;
+  counter-reset: bus-stop;
+  margin: 0;
+  padding: 0;
+  max-height: 390px;
+  overflow-y: auto;
+}
+
+.bus-stop-list li {
+  counter-increment: bus-stop;
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 8px 9px 34px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.bus-stop-list li::before {
+  content: counter(bus-stop);
+  position: absolute;
+  left: 7px;
+  top: 8px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--accent);
+  text-align: center;
+  line-height: 18px;
+  font-size: 10px;
+}
+
+.bus-stop-list li:last-child { border-bottom: 0; }
+.bus-stop-list small { color: var(--text-dim); white-space: nowrap; }
+
+@media (max-width: 900px) {
+  .bus-cols { grid-template-columns: 1fr; }
+}
+
 /* ── 提示条 ───────────────────────────────────────────────────────── */
 #toast {
   position: fixed;

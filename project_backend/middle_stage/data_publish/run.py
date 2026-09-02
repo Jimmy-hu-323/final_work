@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""人流密度数据发布器 —— 启动入口。
+"""LensGo 模拟数据发布器 —— 启动入口。
 
 只依赖 Python 标准库，不需要 pip install：
 
@@ -37,7 +37,7 @@ from app.store import Store  # noqa: E402
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="人流密度数据发布器",
+        description="LensGo 人流与巴士模拟数据发布器",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -163,6 +163,13 @@ def main() -> int:
     elif not args.no_seed and config.seed_on_empty and db.is_empty(config.db_path):
         result = store.seed()
         print(f"[seed] 首次初始化：{result['cities']} 个城市，{result['regions']} 个区域")
+
+    bus_seed = store.seed_bus(reset=args.reseed)
+    if bus_seed["routes"] or bus_seed["stops"]:
+        print(
+            f"[seed] 巴士演示数据：{bus_seed['routes']} 条路线，"
+            f"{bus_seed['stops']} 个站点"
+        )
 
     if args.seed_only:
         print(f"[seed] 数据库就绪：{config.db_path}")

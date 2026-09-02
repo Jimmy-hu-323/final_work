@@ -76,6 +76,76 @@ CREATE INDEX IF NOT EXISTS idx_readings_region_time
     ON readings (region_id, observed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_readings_batch ON readings (batch_id);
 
+CREATE TABLE IF NOT EXISTS bus_routes (
+    route_id     TEXT PRIMARY KEY,
+    route_no     TEXT NOT NULL,
+    direction    TEXT NOT NULL,
+    origin       TEXT NOT NULL,
+    destination  TEXT NOT NULL,
+    operator     TEXT,
+    color        TEXT,
+    source       TEXT NOT NULL DEFAULT 'mock',
+    active       INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+    created_at   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bus_stops (
+    stop_id      TEXT PRIMARY KEY,
+    name         TEXT NOT NULL,
+    name_en      TEXT,
+    center_lng   REAL NOT NULL,
+    center_lat   REAL NOT NULL,
+    source       TEXT NOT NULL DEFAULT 'mock',
+    created_at   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bus_route_stops (
+    route_id          TEXT NOT NULL REFERENCES bus_routes(route_id),
+    stop_id           TEXT NOT NULL REFERENCES bus_stops(stop_id),
+    stop_sequence     INTEGER NOT NULL,
+    minutes_from_start REAL NOT NULL,
+    PRIMARY KEY (route_id, stop_sequence),
+    UNIQUE (route_id, stop_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_bus_route_stops_stop
+    ON bus_route_stops (stop_id, route_id);
+
+CREATE TABLE IF NOT EXISTS bus_vehicles (
+    vehicle_id           TEXT PRIMARY KEY,
+    route_id             TEXT NOT NULL REFERENCES bus_routes(route_id),
+    display_name         TEXT,
+    current_stop_sequence INTEGER NOT NULL,
+    progress             REAL NOT NULL DEFAULT 0,
+    status               TEXT NOT NULL,
+    occupancy_level      INTEGER NOT NULL DEFAULT 0,
+    delay_minutes        INTEGER NOT NULL DEFAULT 0,
+    speed_kmh            REAL NOT NULL DEFAULT 0,
+    observed_at          TEXT NOT NULL,
+    updated_at           TEXT NOT NULL,
+    source               TEXT NOT NULL DEFAULT 'mock'
+);
+
+CREATE INDEX IF NOT EXISTS idx_bus_vehicles_route
+    ON bus_vehicles (route_id, observed_at DESC);
+
+CREATE TABLE IF NOT EXISTS bus_vehicle_readings (
+    reading_id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    vehicle_id            TEXT NOT NULL,
+    route_id              TEXT NOT NULL REFERENCES bus_routes(route_id),
+    current_stop_sequence INTEGER NOT NULL,
+    progress              REAL NOT NULL,
+    status                TEXT NOT NULL,
+    occupancy_level       INTEGER NOT NULL,
+    delay_minutes         INTEGER NOT NULL,
+    speed_kmh             REAL NOT NULL,
+    observed_at           TEXT NOT NULL,
+    created_at            TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_bus_vehicle_history
+    ON bus_vehicle_readings (vehicle_id, observed_at DESC);
+
 CREATE TABLE IF NOT EXISTS users (
     user_id       TEXT PRIMARY KEY,
     username      TEXT NOT NULL UNIQUE COLLATE NOCASE,

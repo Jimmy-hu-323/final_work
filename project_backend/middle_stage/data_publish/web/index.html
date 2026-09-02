@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>人流密度数据发布器</title>
+<title>LensGo 模拟数据发布器</title>
 <link rel="stylesheet" href="/vendor/leaflet.css?v=1.9.4">
 <link rel="stylesheet" href="/styles.css?v=20260807-map-layout-fallback">
 </head>
@@ -11,7 +11,7 @@
 <div class="wrap">
 
   <header class="top">
-    <h1>人流密度数据发布器</h1>
+    <h1>LensGo 模拟数据发布器</h1>
     <span class="pill" id="statusPill"><span class="dot"></span><span id="statusText">连接中…</span></span>
     <span class="pill" id="statsPill">—</span>
     <span class="spacer"></span>
@@ -21,6 +21,7 @@
 
   <nav class="tabs">
     <button data-tab="map" class="active">地图发布</button>
+    <button data-tab="bus">巴士报站</button>
     <button data-tab="publish">批量发布</button>
     <button data-tab="current">当前数据</button>
     <button data-tab="history">发布历史</button>
@@ -92,6 +93,92 @@
       </div>
 
       <div class="legend" id="mapLegend" style="margin-top:14px"></div>
+    </div>
+  </section>
+
+  <!-- ── 模拟巴士报站 ─────────────────────────────────────────────── -->
+  <section class="tab-panel" id="tab-bus">
+    <div class="notice bus-disclaimer">
+      当前全部巴士位置、到站时间和拥挤度均为人工模拟数据，只用于 LensGo 功能演示，
+      不可作为实际乘车依据，也不代表澳门交通事务局数据。
+    </div>
+
+    <div class="cols bus-cols">
+      <div class="card">
+        <h2>发布模拟巴士</h2>
+        <p class="hint">可以手动发布一次，也可以启动自动模拟，让车辆按设定速度沿站点持续前进。</p>
+
+        <div class="row">
+          <label class="field">路线<select id="busRoute"></select></label>
+          <label class="field">车辆编号<input id="busVehicleId" type="text" value="lensgo-demo-01" maxlength="64"></label>
+        </div>
+        <div class="row">
+          <label class="field">当前所在站<select id="busCurrentStop"></select></label>
+          <label class="field">驶向下一站进度（%）<input id="busProgress" type="number" min="0" max="100" step="1" value="0"></label>
+        </div>
+        <div class="row">
+          <label class="field">
+            车辆状态
+            <select id="busStatus">
+              <option value="running">行驶中</option>
+              <option value="at_stop">停站中</option>
+              <option value="paused">模拟已暂停</option>
+              <option value="out_of_service">已停止服务</option>
+            </select>
+          </label>
+          <label class="field">
+            车内拥挤度
+            <select id="busOccupancy">
+              <option value="0">空闲</option>
+              <option value="1">较少</option>
+              <option value="2" selected>适中</option>
+              <option value="3">拥挤</option>
+              <option value="4">非常拥挤</option>
+            </select>
+          </label>
+        </div>
+        <div class="row">
+          <label class="field">延误（分钟）<input id="busDelay" type="number" min="-30" max="180" value="0"></label>
+          <label class="field">行驶速度（km/h）<input id="busSpeed" type="number" min="0" max="120" value="24"></label>
+        </div>
+
+        <div class="bus-simulator-box">
+          <strong>自动模拟设置</strong>
+          <div class="row">
+            <label class="field">每隔几秒发布<input id="busPublishInterval" type="number" min="1" max="60" value="5"></label>
+            <label class="field">每站模拟用时（秒）<input id="busSecondsPerStop" type="number" min="5" max="600" value="30"></label>
+          </div>
+        </div>
+
+        <div class="row bus-actions">
+          <button class="btn primary" id="busPublishBtn" type="button">发布一次</button>
+          <button class="btn" id="busStartBtn" type="button">开始自动模拟</button>
+          <button class="btn" id="busPauseBtn" type="button">暂停</button>
+          <button class="btn danger" id="busStopBtn" type="button">停止车辆</button>
+          <span class="badge" id="busSimulatorState">未运行</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-heading">
+          <div><h2>路线站点</h2><p>到站时间按路线分钟数、车辆进度和延误量计算。</p></div>
+        </div>
+        <div class="bus-route-summary" id="busRouteSummary">请选择路线</div>
+        <ol class="bus-stop-list" id="busStopList"></ol>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-heading">
+        <div><h2>当前车辆与报站结果</h2><p>展示当前路线已经发布的最新车辆状态。</p></div>
+        <button class="btn sm" id="busRefreshBtn" type="button">刷新</button>
+      </div>
+      <div class="table-scroll">
+        <table id="busVehicleTable">
+          <thead><tr><th>车辆</th><th>路线</th><th>当前位置</th><th>下一站</th><th>预计到站</th><th>余下站数</th><th>拥挤度</th><th>状态</th><th>更新于</th></tr></thead>
+          <tbody><tr><td colspan="9" class="empty">尚未加载</td></tr></tbody>
+        </table>
+      </div>
     </div>
   </section>
 
@@ -376,6 +463,10 @@
             <tr><td><span class="api-method get">GET</span></td><td><code>/api/amap/regeo?lng=&amp;lat=</code></td><td>逆地理编码（坐标 → 地址）</td></tr>
             <tr><td><span class="api-method post">POST</span></td><td><code>/api/regions/from-amap</code></td><td>把高德地点登记为可发布区域（同一 POI 不重复建）</td></tr>
             <tr><td><span class="api-method post">POST</span></td><td><code>/api/readings</code></td><td>发布一批数据（一次 = 一个批次）</td></tr>
+            <tr><td><span class="api-method get">GET</span></td><td><code>/api/bus/routes</code></td><td>模拟巴士路线及有序站点</td></tr>
+            <tr><td><span class="api-method get">GET</span></td><td><code>/api/bus/vehicles?route_id=</code></td><td>当前模拟车辆位置和下一站信息</td></tr>
+            <tr><td><span class="api-method post">POST</span></td><td><code>/api/bus/vehicles</code></td><td>发布或更新一辆模拟巴士</td></tr>
+            <tr><td><span class="api-method get">GET</span></td><td><code>/api/bus/stops/{id}/arrivals</code></td><td>指定站点的模拟到站预测</td></tr>
             <tr><td><span class="api-method get">GET</span></td><td><code>/api/batches</code></td><td>发布历史</td></tr>
             <tr><td><span class="api-method delete">DELETE</span></td><td><code>/api/batches/{id}</code></td><td>撤销批次</td></tr>
             <tr><td><span class="api-method post">POST</span></td><td><code>/api/cities</code> / <code>/api/regions</code></td><td>新增城市 / 区域</td></tr>
@@ -426,6 +517,6 @@
 
 <div id="toast"></div>
 <script src="/vendor/leaflet.js"></script>
-<script src="/app.js?v=20260819-auth"></script>
+<script src="/app.js?v=20260902-bus"></script>
 </body>
 </html>

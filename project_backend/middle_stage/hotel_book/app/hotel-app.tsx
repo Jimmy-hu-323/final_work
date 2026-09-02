@@ -1,6 +1,9 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { createRoot as createHotelRoot } from "react-dom/client";
+
+export { createHotelRoot };
 
 type Hotel = {
   id: string;
@@ -148,6 +151,7 @@ export function HotelApp() {
   const [breakfast, setBreakfast] = useState(false);
   const [inventory, setInventory] = useState<Inventory[]>([]);
   const [inventoryLoading, setInventoryLoading] = useState(false);
+  const [inventoryHotelId, setInventoryHotelId] = useState("");
 
   const notify = (message: string, tone: Toast["tone"] = "info") => {
     setToast({ message, tone });
@@ -175,21 +179,36 @@ export function HotelApp() {
       .finally(() => setLoading(false));
   }, [loadState]);
 
+  const merchantHotel =
+    state?.hotels.find((hotel) => hotel.id === "hotel_wynnpalace") ||
+    state?.hotels[0] ||
+    null;
+
   const loadInventory = useCallback(async () => {
+    if (!merchantHotel) return;
     setInventoryLoading(true);
+    setInventoryHotelId(merchantHotel.id);
     try {
-      const data = await jsonRequest<{ data: Inventory[] }>("/api/v1/inventory?hotel_id=hotel_harbour");
+      const data = await jsonRequest<{ data: Inventory[] }>(
+        `/api/v1/inventory?hotel_id=${encodeURIComponent(merchantHotel.id)}`,
+      );
       setInventory(data.data);
     } catch (error) {
       notify(error instanceof Error ? error.message : "库存加载失败", "error");
     } finally {
       setInventoryLoading(false);
     }
-  }, []);
+  }, [merchantHotel]);
 
   useEffect(() => {
-    if (activeView === "merchant" && !inventory.length) void loadInventory();
-  }, [activeView, inventory.length, loadInventory]);
+    if (
+      activeView === "merchant" &&
+      merchantHotel &&
+      inventoryHotelId !== merchantHotel.id
+    ) {
+      void loadInventory();
+    }
+  }, [activeView, inventoryHotelId, loadInventory, merchantHotel]);
 
   const pendingBills = useMemo(
     () => state?.bills.filter((bill) => bill.status === "PENDING_PAYMENT") || [],
@@ -727,7 +746,7 @@ export function HotelApp() {
                 </div>
                 <div className="merchant-badge">
                   <span>酒店</span>
-                  <strong>澄湾艺居</strong>
+                  <strong>{merchantHotel?.name || "酒店库存"}</strong>
                   <small>已审核 · 正常营业</small>
                 </div>
               </section>

@@ -1,5 +1,5 @@
 // Generate a browser-only entry so workerd never has to SSR the home page.
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -34,22 +34,15 @@ if (!cssName) {
   throw new Error("The compiled hotel stylesheet was not found.");
 }
 
-const moduleSource = `import { HotelApp } from "/${hotelEntry.file}";
-import { i as loadReact, t as loadReactDomClient } from "/${frameworkEntry.file}";
+const moduleSource = `import { HotelApp, createHotelRoot } from "/${hotelEntry.file}";
+import { i as loadReact } from "/${frameworkEntry.file}";
 
 const React = loadReact();
-const { hydrateRoot } = loadReactDomClient();
 const root = document.getElementById("hotel-root");
 
 if (!root) throw new Error("Hotel application root is missing.");
 
-hydrateRoot(root, React.createElement(HotelApp), {
-  onRecoverableError(error) {
-    if (!String(error?.message || error).includes("Hydration failed")) {
-      console.error(error);
-    }
-  },
-});
+createHotelRoot(root).render(React.createElement(HotelApp));
 `;
 
 const htmlSource = `<!doctype html>
@@ -74,6 +67,7 @@ const htmlSource = `<!doctype html>
 `;
 
 await Promise.all([
+  mkdir(join(projectRoot, "dist", "server", ".wrangler"), { recursive: true }),
   writeFile(join(clientDir, "hotel-static-entry.js"), moduleSource),
   writeFile(join(clientDir, "index.html"), htmlSource),
 ]);

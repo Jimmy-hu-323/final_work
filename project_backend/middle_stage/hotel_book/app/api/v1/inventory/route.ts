@@ -11,8 +11,18 @@ export async function GET(request: Request) {
   try {
     await ensureData();
     const url = new URL(request.url);
-    const hotelId = url.searchParams.get("hotel_id") || "hotel_harbour";
-    const { results } = await database()
+    const d1 = database();
+    const requestedHotelId = url.searchParams.get("hotel_id");
+    const defaultHotel = requestedHotelId
+      ? null
+      : await d1
+          .prepare("SELECT id FROM hotels ORDER BY rating DESC, id LIMIT 1")
+          .first<{ id: string }>();
+    const hotelId = requestedHotelId || defaultHotel?.id;
+    if (!hotelId) {
+      return Response.json({ data: [], request_id: crypto.randomUUID() });
+    }
+    const { results } = await d1
       .prepare(`SELECT i.*, h.name AS hotel_name FROM daily_inventory i
         JOIN hotels h ON h.id = i.hotel_id
         WHERE i.hotel_id = ? AND i.stay_date >= date('now')

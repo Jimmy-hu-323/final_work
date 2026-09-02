@@ -1,0 +1,300 @@
+{
+  "typography": [
+    {
+      "role": "display",
+      "fontFamily": "ui-sans-serif",
+      "fontSize": "78px",
+      "fontWeight": "500",
+      "lineHeight": "76.44px",
+      "letterSpacing": "-1.95px",
+      "color": "#17231F",
+      "sampleText": "把住宿订得清楚，也从容。"
+    },
+    {
+      "role": "heading",
+      "fontFamily": "ui-sans-serif",
+      "fontSize": "40px",
+      "fontWeight": "500",
+      "lineHeight": "44px",
+      "letterSpacing": "normal",
+      "color": "#F9F7F0",
+      "sampleText": "AI 能做很多事，但不能替你花钱。"
+    },
+    {
+      "role": "heading-2",
+      "fontFamily": "ui-sans-serif",
+      "fontSize": "38px",
+      "fontWeight": "500",
+      "lineHeight": "57px",
+      "letterSpacing": "normal",
+      "color": "#17231F",
+      "sampleText": "现在可订的好住处"
+    },
+    {
+      "role": "heading-3",
+      "fontFamily": "ui-sans-serif",
+      "fontSize": "25px",
+      "fontWeight": "600",
+      "lineHeight": "37.5px",
+      "letterSpacing": "normal",
+      "color": "#17231F",
+      "sampleText": "澳门永利皇宫"
+    },
+    {
+      "role": "label",
+      "fontFamily": "ui-sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "400",
+      "lineHeight": "24px",
+      "letterSpacing": "normal",
+      "color": "#17231F",
+      "sampleText": "目的地澳门特别行政区"
+    },
+    {
+      "role": "body",
+      "fontFamily": "ui-sans-serif",
+      "fontSize": "15px",
+      "fontWeight": "400",
+      "lineHeight": "28.5px",
+      "letterSpacing": "normal",
+      "color": "#5D6A65",
+      "sampleText": "真实库存、完整价格与明确授权。你负责决定，AI 负责把复杂的旅程整理好。"
+    },
+    {
+      "role": "link",
+      "fontFamily": "ui-monospace",
+      "fontSize": "11px",
+      "fontWeight": "700",
+      "lineHeight": "16.5px",
+      "letterSpacing": "0.88px",
+      "color": "#17231F",
+      "sampleText": "API"
+    },
+    {
+      "role": "body-small",
+      "fontFamily": "ui-sans-serif",
+      "fontSize": "10px",
+      "fontWeight": "400",
+      "lineHeight": "15px",
+      "letterSpacing": "normal",
+      "color": "#66706B",
+      "sampleText": "旅行者"
+    }
+  ],
+  "spacing": {
+    "observed": [
+      2,
+      5,
+      6,
+      7,
+      8,
+      10,
+      11,
+      13,
+      14,
+      15,
+      16,
+      18,
+      20,
+      22,
+      24
+    ],
+    "baseUnit": 8
+  },
+  "radius": [
+    "2px",
+    "3px"
+  ],
+  "shadows": [
+    {
+      "value": "rgba(23, 35, 31, 0.12) 0px 22px 65px 0px",
+      "count": 1
+    }
+  ],
+  "buttons": [
+    {
+      "label": "旅旅屿STAY WITH CLARITY",
+      "background": "transparent",
+      "backgroundImage": "",
+      "backdropFilter": "",
+      "color": "#17231F",
+      "padding": "0px",
+      "borderRadius": "0px",
+      "border": "0px none rgb(23, 35, 31)",
+      "boxShadow": "none",
+      "fontSize": "16px",
+      "fontWeight": "400",
+      "height": "39.5938px"
+    },
+    {
+      "label": "查看权限",
+      "background": "transparent",
+      "backgroundImage": "",
+      "backdropFilter": "",
+      "color": "#FFFFFF",
+      "padding": "2px 0px",
+      "borderRadius": "0px",
+      "border": "",
+      "boxShadow": "none",
+      "fontSize": "11px",
+      "fontWeight": "400",
+      "height": "21.5px"
+    },
+    {
+      "label": "搜索可订酒店↗",
+      "background": "#164D3F",
+      "backgroundImage": "",
+      "backdropFilter": "",
+      "color": "#FFFFFF",
+      "padding": "0px 20px",
+      "borderRadius": "2px",
+      "border": "0px none rgb(255, 255, 255)",
+      "boxShadow": "none",
+      "fontSize": "13px",
+      "fontWeight": "600",
+      "height": "82.5px"
+    }
+  ],
+  "cards": [
+    {
+      "label": "card",
+      "background": "#FFFEFA",
+      "backgroundImage": "",
+      "backdropFilter": "",
+      "color": "#17231F",
+      "padding": "0px",
+      "borderRadius": "3px",
+      "border": "1px solid rgba(23, 35, 31, 0.15)",
+      "boxShadow": "rgba(23, 35, 31, 0.12) 0px 22px 65px 0px",
+      "fontSize": "16px",
+      "fontWeight": "400",
+      "height": "100.5px"
+    },
+    {
+      "label": "card",
+      "background": "#FFFEFA",
+      "backgroundImage": "",
+      "backdropFilter": "",
+      "color": "#17231F",
+      "padding": "0px",
+      "borderRadius": "3px",
+      "border": "1px solid rgba(23, 35, 31, 0.13)",
+      "boxShadow": "none",
+      "fontSize": "16px",
+      "fontWeight": "400",
+      "height": "554px"
+    },
+    {
+      "label": "card",
+      "background": "transparent",
+      "backgroundImage": "",
+      "backdropFilter": "",
+      "color": "#17231F",
+      "padding": "18px 20px 20px",
+      "borderRadius": "0px",
+      "border": "0px solid rgb(23, 35, 31)",
+      "boxShadow": "none",
+      "fontSize": "16px",
+      "fontWeight": "400",
+      "height": "316px"
+    }
+  ],
+  "nav": {
+    "label": "navigation",
+    "background": "#F5F4EF",
+    "backgroundImage": "",
+    "backdropFilter": "blur(18px)",
+    "color": "#17231F",
+    "padding": "0px 76.8px",
+    "borderRadius": "0px",
+    "border": "",
+    "boxShadow": "none",
+    "fontSize": "16px",
+    "fontWeight": "400",
+    "height": "76px"
+  },
+  "chips": [
+    {
+      "label": "★ 4.8",
+      "background": "#FFFEFA",
+      "color": "#17231F",
+      "padding": "7px 10px",
+      "borderRadius": "2px",
+      "border": "0px solid rgb(23, 35, 31)",
+      "boxShadow": "none",
+      "fontSize": "11px",
+      "fontWeight": "700",
+      "height": "30.5px"
+    },
+    {
+      "label": "旅",
+      "background": "#17231F",
+      "color": "#FFFFFF",
+      "padding": "0px",
+      "borderRadius": "50% 50% 48% 52% / 45% 52% 48% 55%",
+      "border": "0px solid rgb(255, 255, 255)",
+      "boxShadow": "none",
+      "fontSize": "20px",
+      "fontWeight": "400",
+      "height": "39px"
+    },
+    {
+      "label": "API",
+      "background": "transparent",
+      "color": "#17231F",
+      "padding": "0px",
+      "borderRadius": "99px",
+      "border": "1px solid rgb(201, 206, 200)",
+      "boxShadow": "none",
+      "fontSize": "11px",
+      "fontWeight": "700",
+      "height": "34px"
+    },
+    {
+      "label": "林",
+      "background": "#E9D7B7",
+      "color": "#17231F",
+      "padding": "0px",
+      "borderRadius": "50%",
+      "border": "0px solid rgb(23, 35, 31)",
+      "boxShadow": "none",
+      "fontSize": "16px",
+      "fontWeight": "400",
+      "height": "36px"
+    }
+  ],
+  "statCells": [],
+  "tabs": [],
+  "backgrounds": [
+    {
+      "value": "radial-gradient(circle at 12% 0%, rgba(222, 235, 225, 0.75), rgba(0, 0, 0, 0) 480px), none",
+      "area": 7003320
+    },
+    {
+      "value": "linear-gradient(150deg, rgb(241, 223, 189) 0%, rgb(211, 171, 115) 52%, rgb(134, 101, 67) 100%)",
+      "area": 359621
+    },
+    {
+      "value": "linear-gradient(115deg, rgba(255, 254, 250, 0.85), rgba(220, 236, 229, 0.68)), repeating-linear-gradient(90deg, rgba(0, 0, 0, 0) 0px, rgba(0, 0, 0, 0) 79px, rgba(23, 35, 31, 0.04) 80px)",
+      "area": 557040
+    },
+    {
+      "value": "linear-gradient(150deg, rgb(240, 197, 181) 0%, rgb(215, 125, 97) 55%, rgb(130, 75, 69) 100%)",
+      "area": 269717
+    },
+    {
+      "value": "linear-gradient(150deg, rgb(207, 226, 219) 0%, rgb(137, 182, 167) 55%, rgb(50, 111, 94) 100%)",
+      "area": 269717
+    }
+  ],
+  "glass": [
+    {
+      "backdropFilter": "blur(18px)",
+      "background": "rgba(245, 244, 239, 0.91)",
+      "border": "",
+      "borderRadius": "0px",
+      "boxShadow": "",
+      "area": 145920
+    }
+  ]
+}

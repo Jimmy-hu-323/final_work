@@ -207,6 +207,32 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error || "操作失败");
 }
 
+function isAmapNavigationUrl(value: string | undefined): value is string {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "https:" &&
+      url.hostname === "uri.amap.com" &&
+      url.pathname === "/navigation"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function openAmapNavigation(url: string) {
+  const nativeBridge = window.LensGoNative;
+  if (nativeBridge?.openExternalNavigation) {
+    if (!nativeBridge.openExternalNavigation(url)) {
+      message.error("高德导航链接无效，请重新规划路线");
+    }
+    return;
+  }
+  const popup = window.open(url, "_blank", "noopener,noreferrer");
+  if (!popup) message.error("无法打开外部导航，请检查系统浏览器设置");
+}
+
 const PHOTO_SEARCH_PATTERN =
   /照片|图片|相册|拍过|拍的|影像|找图|发给我|发出来|哪一张|哪张/;
 const IMAGE_GENERATION_PATTERN =
@@ -2000,42 +2026,44 @@ function LocalChatPage({
                   </div>
                   <div className={styles.messageContent}>
                     <ReactMarkdown
-                      components={
-                        activeSession?.guide && item.role === "assistant"
-                          ? {
-                              a: ({
-                                node: _node,
-                                href,
-                                children,
-                                ...props
-                              }) => {
-                                const match = href?.match(
-                                  /^#lensgo-guide-([1-6])$/,
-                                );
-                                return (
-                                  <a
-                                    {...props}
-                                    href={href}
-                                    onClick={
-                                      match
-                                        ? (event) => {
-                                            event.preventDefault();
-                                            void send(
-                                              GUIDE_OPTIONS[
-                                                Number(match[1]) - 1
-                                              ],
-                                            );
-                                          }
-                                        : undefined
+                      components={{
+                        a: ({ node: _node, href, children, ...props }) => {
+                          const guideMatch = activeSession?.guide
+                            ? href?.match(/^#lensgo-guide-([1-6])$/)
+                            : null;
+                          const navigationLink = isAmapNavigationUrl(href);
+                          return (
+                            <a
+                              {...props}
+                              href={href}
+                              rel={
+                                navigationLink
+                                  ? "noopener noreferrer"
+                                  : undefined
+                              }
+                              onClick={
+                                guideMatch
+                                  ? (event) => {
+                                      event.preventDefault();
+                                      void send(
+                                        GUIDE_OPTIONS[
+                                          Number(guideMatch[1]) - 1
+                                        ],
+                                      );
                                     }
-                                  >
-                                    {children}
-                                  </a>
-                                );
-                              },
-                            }
-                          : undefined
-                      }
+                                  : navigationLink
+                                  ? (event) => {
+                                      event.preventDefault();
+                                      openAmapNavigation(href);
+                                    }
+                                  : undefined
+                              }
+                            >
+                              {children}
+                            </a>
+                          );
+                        },
+                      }}
                     >
                       {item.content}
                     </ReactMarkdown>

@@ -62,7 +62,28 @@ describe("chat navigation", () => {
             transferCount: 0,
             legs: [
               { kind: "walking", durationSeconds: 240, distanceMeters: 300 },
-              { kind: "bus", line: "25路", fromStop: "新口岸", toStop: "新马路", viaStops: 8 },
+              {
+                kind: "bus",
+                line: "25路",
+                fromStop: "新口岸",
+                toStop: "新马路",
+                viaStops: 8,
+                busReport: {
+                  dataType: "mock",
+                  source: "LensGo 模拟巴士发布器",
+                  disclaimer: "模拟报站，仅用于功能演示，不可作为实际乘车依据。",
+                  stopName: "新口岸",
+                  routeNo: "25",
+                  arrivals: [
+                    {
+                      vehicleId: "demo-25-01",
+                      etaMinutes: 4,
+                      stopsAway: 2,
+                      occupancyLevel: 2,
+                    },
+                  ],
+                },
+              },
               { kind: "walking", durationSeconds: 160, distanceMeters: 200 },
             ],
           },
@@ -86,6 +107,8 @@ describe("chat navigation", () => {
     expect(text).toContain("方案 1（推荐）");
     expect(text).toContain("步行约 7 分钟（500 米）");
     expect(text).toContain("在 **新口岸** 上车乘坐 **25路**");
+    expect(text).toContain("**预计到站**：demo-25-01：约 4 分钟，2 站，车内适中");
+    expect(text).not.toContain("不可作为实际乘车依据");
     expect(text).toContain("无需换乘");
     expect(text).toContain("方案 2");
     expect(text).toContain("换乘 1 次");

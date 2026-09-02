@@ -78,6 +78,11 @@ ROUTES: list[Route] = [
     Route("GET", "/api/amap/regeo", "amap_regeo", "crowd:amap:use"),
     Route("GET", "/api/density/latest", "latest_density", "crowd:read"),
     Route("POST", "/api/readings", "publish", "crowd:publish"),
+    Route("GET", "/api/bus/routes", "bus_routes", "crowd:read"),
+    Route("GET", "/api/bus/routes/{route_id}", "bus_route", "crowd:read"),
+    Route("GET", "/api/bus/vehicles", "bus_vehicles", "crowd:read"),
+    Route("POST", "/api/bus/vehicles", "bus_publish_vehicle", "crowd:publish"),
+    Route("GET", "/api/bus/stops/{stop_id}/arrivals", "bus_arrivals", "crowd:read"),
     Route("GET", "/api/batches", "list_batches", "crowd:read"),
     Route("GET", "/api/batches/{batch_id}", "get_batch", "crowd:read"),
     Route("DELETE", "/api/batches/{batch_id}", "revert_batch", "crowd:batches:revert"),
@@ -407,6 +412,17 @@ def make_handler(config: Config, store: Store) -> type[BaseHTTPRequestHandler]:
                     "crowd_level_labels": CROWD_LEVEL_LABELS,
                     "crowd_thresholds": CROWD_THRESHOLDS,
                     "coord_system": "gcj02",
+                    "bus": {
+                        "source": "mock",
+                        "status_labels": {
+                            "running": "行驶中",
+                            "at_stop": "停站中",
+                            "paused": "模拟已暂停",
+                            "out_of_service": "已停止服务",
+                        },
+                        "occupancy_labels": ["空闲", "较少", "适中", "拥挤", "非常拥挤"],
+                        "disclaimer": "模拟数据，仅用于 LensGo 功能演示，不可作为实际乘车依据。",
+                    },
                     "auth": {
                         "mode": config.auth_mode,
                         "principal": self.principal.public() if self.principal else None,
@@ -504,6 +520,36 @@ def make_handler(config: Config, store: Store) -> type[BaseHTTPRequestHandler]:
 
         def api_publish(self) -> None:
             self.send_json(201, store.publish(self.read_json_body()))
+
+        # ── 模拟巴士报站 ──────────────────────────────────────────────
+        def api_bus_routes(self) -> None:
+            self.send_json(200, store.list_bus_routes())
+
+        def api_bus_route(self, route_id: str) -> None:
+            self.send_json(200, store.list_bus_routes(route_id=route_id))
+
+        def api_bus_vehicles(self) -> None:
+            include_inactive = self.query.get("include_inactive", "0").lower() in (
+                "1", "true", "yes",
+            )
+            self.send_json(
+                200,
+                store.list_bus_vehicles(
+                    route_id=self.query.get("route_id", "").strip(),
+                    include_inactive=include_inactive,
+                ),
+            )
+
+        def api_bus_publish_vehicle(self) -> None:
+            self.send_json(201, store.publish_bus_vehicle(self.read_json_body()))
+
+        def api_bus_arrivals(self, stop_id: str) -> None:
+            self.send_json(
+                200,
+                store.bus_arrivals(
+                    stop_id, route_id=self.query.get("route_id", "").strip()
+                ),
+            )
 
         def api_list_batches(self) -> None:
             self.send_json(

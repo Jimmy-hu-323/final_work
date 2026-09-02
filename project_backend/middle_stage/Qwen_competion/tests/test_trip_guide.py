@@ -126,7 +126,9 @@ class ChatNavigationTests(unittest.IsolatedAsyncioTestCase):
                 ],
             },
         }
-        with patch.object(guide, "_navigation_amap_payload", side_effect=[place, transit]) as request:
+        with patch.object(guide, "_navigation_amap_payload", side_effect=[place, transit]) as request, patch.object(
+            guide, "_attach_mock_bus_reports"
+        ) as attach_bus:
             result = guide._fetch_chat_navigation("test", 22.18, 113.53, "大三巴", "transit")
         self.assertTrue(result["available"])
         self.assertEqual(result["mode"], "transit")
@@ -145,6 +147,32 @@ class ChatNavigationTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("向左转", str(result))
         self.assertGreater(len(result["points"]), 1)
         self.assertEqual(request.call_args_list[1].args[0], f"{guide.AMAP_DIRECTION_BASE}/transit/integrated")
+        attach_bus.assert_called_once()
+
+    def test_mock_bus_report_matches_route_and_boarding_stop(self):
+        options = [{"legs": [{
+            "kind": "bus", "line": "3A路", "fromStop": "媽閣交通樞紐", "toStop": "關閘總站",
+        }]}]
+        routes = {
+            "items": [{
+                "route_id": "route-3a", "route_no": "3A",
+                "stops": [{"stop_id": "stop-barra", "name": "妈阁交通枢纽"}],
+            }],
+        }
+        arrivals = {
+            "generated_at": "2026-09-02T01:00:00Z",
+            "items": [{
+                "vehicle_id": "demo-3a-01", "eta_minutes": 4, "stops_away": 2,
+                "occupancy_level": 2, "delay_minutes": 1, "observed_at": "2026-09-02T01:00:00Z",
+            }],
+        }
+        with patch.object(guide, "_publisher_json", side_effect=[routes, arrivals]) as fetch:
+            guide._attach_mock_bus_reports(options)
+        report = options[0]["legs"][0]["busReport"]
+        self.assertEqual(report["dataType"], "mock")
+        self.assertEqual(report["arrivals"][0]["stopsAway"], 2)
+        self.assertIn("不可作为实际乘车依据", report["disclaimer"])
+        self.assertIn("stop-barra", fetch.call_args_list[1].args[0])
 
     async def test_defaults_to_public_transport(self):
         with patch.object(guide, "_guide_amap_key", return_value="test"), patch.object(

@@ -65,6 +65,7 @@ declare global {
       startLocationUpdates?: () => boolean;
       stopLocationUpdates?: () => void;
       capturePhotoToGallery?: () => boolean;
+      openExternalNavigation?: (url: string) => boolean;
     };
   }
 }

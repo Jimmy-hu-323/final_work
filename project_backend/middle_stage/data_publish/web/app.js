@@ -21,6 +21,11 @@ const state = {
   basket: new Map(), // region_id -> { region, count, crowd_level }
   user: null,
   csrfToken: sessionStorage.getItem(CSRF_STORAGE_KEY) || csrfFromCookie(),
+  bus: {
+    routes: [],
+    timer: null,
+    publishing: false,
+  },
 };
 
 /* ── 工具 ────────────────────────────────────────────────────────── */
@@ -138,8 +143,9 @@ async function refreshStatus() {
     $("statusPill").className = "pill ok";
     $("statusText").textContent = "服务正常";
     const s = health.stats;
-    $("statsPill").textContent =
-      `${s.cities} 城市 · ${s.districts} 区 · ${s.streets} 街道 · ${s.pois} 景点 · ${s.readings} 条读数`;
+    $("statsPill").textContent = s
+      ? `${s.cities} 城市 · ${s.districts} 区 · ${s.streets} 街道 · ${s.pois} 景点 · ${s.readings} 条读数 · ${s.bus_vehicles || 0} 辆巴士`
+      : "人流与巴士模拟数据";
   } catch (error) {
     $("statusPill").className = "pill bad";
     $("statusText").textContent = `连接失败：${error.message}`;
@@ -429,6 +435,244 @@ async function loadCurrent() {
       .join("");
   } catch (error) {
     tbody.innerHTML = `<tr><td colspan="6" class="empty">${esc(error.message)}</td></tr>`;
+  }
+}
+
+/* ── 模拟巴士报站 ───────────────────────────────────────────────── */
+
+function selectedBusRoute() {
+  return state.bus.routes.find((route) => route.route_id === $("busRoute").value) || null;
+}
+
+function busStatusLabel(status) {
+  return state.meta?.bus?.status_labels?.[status] || status || "—";
+}
+
+function busOccupancyLabel(level) {
+  return state.meta?.bus?.occupancy_labels?.[Number(level)] ?? `等级 ${level}`;
+}
+
+async function loadBusRoutes() {
+  const payload = await api("/api/bus/routes");
+  state.bus.routes = payload.items || [];
+  const previous = $("busRoute").value;
+  $("busRoute").innerHTML = state.bus.routes
+    .map(
+      (route) =>
+        `<option value="${esc(route.route_id)}">${esc(route.route_no)} · ${esc(route.direction)}</option>`,
+    )
+    .join("");
+  if (state.bus.routes.some((route) => route.route_id === previous)) {
+    $("busRoute").value = previous;
+  }
+  renderBusRoute();
+}
+
+function renderBusRoute() {
+  const route = selectedBusRoute();
+  if (!route) {
+    $("busRouteSummary").textContent = "暂无演示路线";
+    $("busStopList").innerHTML = "";
+    $("busCurrentStop").innerHTML = "";
+    return;
+  }
+  $("busRouteSummary").innerHTML =
+    `<strong style="color:${esc(route.color || "#2563eb")}">${esc(route.route_no)}</strong> ` +
+    `${esc(route.origin)} → ${esc(route.destination)} · ${route.stop_count} 站`;
+  $("busStopList").innerHTML = route.stops
+    .map(
+      (stop) =>
+        `<li><span>${esc(stop.name)}</span><small>约第 ${esc(stop.minutes_from_start)} 分钟</small></li>`,
+    )
+    .join("");
+  const previousSequence = Number($("busCurrentStop").value || 0);
+  $("busCurrentStop").innerHTML = route.stops
+    .map(
+      (stop) =>
+        `<option value="${stop.stop_sequence}">${stop.stop_sequence + 1}. ${esc(stop.name)}</option>`,
+    )
+    .join("");
+  $("busCurrentStop").value = String(Math.min(previousSequence, route.stops.length - 1));
+  normalizeBusProgressAtTerminus();
+  loadBusVehicles();
+}
+
+function normalizeBusProgressAtTerminus() {
+  const route = selectedBusRoute();
+  if (!route) return;
+  const sequence = Number($("busCurrentStop").value || 0);
+  const isTerminus = sequence >= route.stops.length - 1;
+  $("busProgress").disabled = isTerminus;
+  if (isTerminus) $("busProgress").value = "0";
+}
+
+function busVehiclePayload(statusOverride = "") {
+  const route = selectedBusRoute();
+  if (!route) throw new Error("请先选择巴士路线");
+  const sequence = Number($("busCurrentStop").value || 0);
+  const progressPercent = sequence >= route.stops.length - 1 ? 0 : Number($("busProgress").value || 0);
+  return {
+    vehicle_id: $("busVehicleId").value.trim(),
+    display_name: $("busVehicleId").value.trim(),
+    route_id: route.route_id,
+    current_stop_sequence: sequence,
+    progress: Math.max(0, Math.min(100, progressPercent)) / 100,
+    status: statusOverride || $("busStatus").value,
+    occupancy_level: Number($("busOccupancy").value),
+    delay_minutes: Number($("busDelay").value || 0),
+    speed_kmh: Number($("busSpeed").value || 0),
+  };
+}
+
+async function publishBusVehicle(statusOverride = "", silent = false) {
+  if (state.bus.publishing) return null;
+  state.bus.publishing = true;
+  try {
+    const result = await api("/api/bus/vehicles", {
+      method: "POST",
+      body: busVehiclePayload(statusOverride),
+    });
+    if (statusOverride) $("busStatus").value = statusOverride;
+    if (!silent) {
+      const next = result.next_stop?.name ? `，下一站 ${result.next_stop.name}` : "，已到终点";
+      toast(`已发布 ${result.route_no} 路 ${result.display_name}${next}`, "ok");
+    }
+    await loadBusVehicles(statusOverride === "out_of_service");
+    refreshStatus();
+    return result;
+  } catch (error) {
+    if (!silent) toast(`巴士数据发布失败：${error.message}`, "err");
+    throw error;
+  } finally {
+    state.bus.publishing = false;
+  }
+}
+
+function setBusSimulatorState(text, active = false) {
+  const node = $("busSimulatorState");
+  node.textContent = text;
+  node.className = active ? "badge bus-running" : "badge";
+}
+
+function stopBusTimer() {
+  if (state.bus.timer) window.clearInterval(state.bus.timer);
+  state.bus.timer = null;
+}
+
+function advanceBusSimulation() {
+  const route = selectedBusRoute();
+  if (!route) return;
+  const intervalSeconds = Math.max(1, Number($("busPublishInterval").value || 5));
+  const secondsPerStop = Math.max(5, Number($("busSecondsPerStop").value || 30));
+  let sequence = Number($("busCurrentStop").value || 0);
+  let progress = Number($("busProgress").value || 0);
+  if (sequence >= route.stops.length - 1) {
+    sequence = 0;
+    progress = 0;
+  } else {
+    progress += (intervalSeconds / secondsPerStop) * 100;
+  }
+  while (progress >= 100) {
+    progress -= 100;
+    sequence += 1;
+    if (sequence >= route.stops.length - 1) {
+      sequence = sequence >= route.stops.length ? 0 : sequence;
+      progress = 0;
+      break;
+    }
+  }
+  $("busCurrentStop").value = String(sequence);
+  $("busProgress").value = String(Math.round(progress));
+  normalizeBusProgressAtTerminus();
+}
+
+async function startBusSimulation() {
+  if (state.bus.timer) {
+    toast("自动模拟已经在运行", "err");
+    return;
+  }
+  try {
+    $("busStatus").value = "running";
+    await publishBusVehicle("running", true);
+  } catch (error) {
+    toast(`无法启动自动模拟：${error.message}`, "err");
+    return;
+  }
+  const intervalSeconds = Math.max(1, Number($("busPublishInterval").value || 5));
+  state.bus.timer = window.setInterval(async () => {
+    advanceBusSimulation();
+    try {
+      await publishBusVehicle("running", true);
+    } catch (error) {
+      stopBusTimer();
+      setBusSimulatorState("发布失败，已暂停");
+      toast(`自动模拟已暂停：${error.message}`, "err");
+    }
+  }, intervalSeconds * 1000);
+  setBusSimulatorState(`运行中 · 每 ${intervalSeconds} 秒发布`, true);
+  toast("自动巴士模拟已启动", "ok");
+}
+
+async function pauseBusSimulation() {
+  stopBusTimer();
+  setBusSimulatorState("已暂停");
+  try {
+    await publishBusVehicle("paused", true);
+    toast("自动巴士模拟已暂停", "ok");
+  } catch (error) {
+    toast(`暂停状态发布失败：${error.message}`, "err");
+  }
+}
+
+async function stopBusSimulation() {
+  stopBusTimer();
+  setBusSimulatorState("已停止");
+  try {
+    await publishBusVehicle("out_of_service", true);
+    toast("车辆已停止服务", "ok");
+  } catch (error) {
+    toast(`停止状态发布失败：${error.message}`, "err");
+  }
+}
+
+async function loadBusVehicles(includeInactive = false) {
+  const body = $("busVehicleTable").querySelector("tbody");
+  const route = selectedBusRoute();
+  if (!route) {
+    body.innerHTML = '<tr><td colspan="9" class="empty">暂无演示路线</td></tr>';
+    return;
+  }
+  try {
+    const query = new URLSearchParams({ route_id: route.route_id });
+    if (includeInactive) query.set("include_inactive", "1");
+    const payload = await api(`/api/bus/vehicles?${query}`);
+    const items = payload.items || [];
+    if (!items.length) {
+      body.innerHTML = '<tr><td colspan="9" class="empty">这条路线尚未发布车辆数据</td></tr>';
+      return;
+    }
+    body.innerHTML = items
+      .map((vehicle) => {
+        const current = vehicle.status === "at_stop" || !vehicle.next_stop
+          ? vehicle.current_stop.name
+          : `${vehicle.current_stop.name}后 ${Math.round(vehicle.progress * 100)}%`;
+        const eta = vehicle.next_stop ? `约 ${vehicle.eta_to_next_stop_minutes} 分钟` : "已到终点";
+        const stale = isStale(vehicle.observed_at, 5) ? " stale" : "";
+        return `<tr>
+          <td>${esc(vehicle.display_name)}</td>
+          <td><strong>${esc(vehicle.route_no)}</strong> · ${esc(vehicle.destination)}</td>
+          <td>${esc(current)}</td>
+          <td>${esc(vehicle.next_stop?.name || "—")}</td>
+          <td>${esc(eta)}</td>
+          <td class="num">${vehicle.remaining_stops}</td>
+          <td>${esc(busOccupancyLabel(vehicle.occupancy_level))}</td>
+          <td>${esc(busStatusLabel(vehicle.status))}</td>
+          <td class="${stale}">${esc(relativeTime(vehicle.observed_at))}</td>
+        </tr>`;
+      })
+      .join("");
+  } catch (error) {
+    body.innerHTML = `<tr><td colspan="9" class="empty">加载失败：${esc(error.message)}</td></tr>`;
   }
 }
 
@@ -1225,6 +1469,10 @@ function bindEvents() {
       const tab = button.dataset.tab;
       $(`tab-${tab}`).classList.add("active");
       if (tab === "map") initMap();
+      if (tab === "bus") {
+        if (!state.bus.routes.length) loadBusRoutes();
+        else loadBusVehicles();
+      }
       if (tab === "current") loadCurrent();
       if (tab === "history") loadHistory();
       if (tab === "places") loadParentOptions();
@@ -1254,6 +1502,14 @@ function bindEvents() {
     map.selection = null;
     map.pickLayer?.clearLayers();
   });
+
+  $("busRoute").addEventListener("change", renderBusRoute);
+  $("busCurrentStop").addEventListener("change", normalizeBusProgressAtTerminus);
+  $("busPublishBtn").addEventListener("click", () => publishBusVehicle());
+  $("busStartBtn").addEventListener("click", startBusSimulation);
+  $("busPauseBtn").addEventListener("click", pauseBusSimulation);
+  $("busStopBtn").addEventListener("click", stopBusSimulation);
+  $("busRefreshBtn").addEventListener("click", () => loadBusVehicles());
 
   $("citySelect").addEventListener("change", runSearch);
   $("regionSearch").addEventListener("input", scheduleSearch);

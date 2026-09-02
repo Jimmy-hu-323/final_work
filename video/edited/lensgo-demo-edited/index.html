@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=1920, height=1080" />
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    @font-face{font-family:"Microsoft YaHei UI";src:local("Microsoft YaHei UI")}*{box-sizing:border-box}html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:#f5f4ef;color:#17231f;font-family:"Microsoft YaHei UI","Segoe UI",sans-serif}.clip{position:absolute;inset:0;overflow:hidden}.paper{background:#f5f4ef}.grain{position:absolute;inset:0;opacity:.13;background-image:radial-gradient(#17231f .65px,transparent .65px);background-size:10px 10px}.eyebrow{font-size:20px;font-weight:700;letter-spacing:.2em;color:#1f6f59}h1,h2,p{margin:0}.title{display:grid;grid-template-columns:1.1fr .9fr;align-items:center;padding:110px 150px}.title h1{margin-top:26px;font-size:88px;line-height:1.06;font-weight:560;letter-spacing:-.04em}.title h1 em{font-style:normal;color:#1f6f59}.title p{margin-top:32px;font-size:30px;line-height:1.55;color:#66706b}.orbit{position:relative;width:560px;height:560px;justify-self:end}.ring{position:absolute;inset:46px;border:1px solid #c9cec8;border-radius:50%}.ring.r2{inset:115px}.ring.r3{inset:186px}.center{position:absolute;left:195px;top:195px;width:170px;height:170px;border-radius:50%;display:grid;place-items:center;background:#164d3f;color:#fff;font-size:62px;font-weight:700;box-shadow:0 28px 70px rgba(22,77,63,.22)}.node{position:absolute;padding:12px 20px;border:1px solid #dfe3dc;border-radius:999px;background:#fffefa;font-size:20px;box-shadow:0 8px 24px rgba(23,35,31,.08)}.n1{left:0;top:255px}.n2{right:0;top:118px}.n3{right:12px;bottom:100px}.route{position:absolute;left:150px;bottom:104px;width:610px;height:8px;border-radius:9px;background:#ff7f16;transform-origin:left}
+    .phone-stage{display:grid;grid-template-columns:650px 1fr;gap:90px;align-items:center;padding:48px 120px 82px 150px}.phone-shell{width:432px;height:960px;padding:15px;border-radius:54px;background:#10141a;box-shadow:0 34px 90px rgba(23,35,31,.23);justify-self:center;position:relative}.phone-shell:before{content:"";position:absolute;z-index:3;top:15px;left:153px;width:126px;height:24px;border-radius:0 0 18px 18px;background:#10141a}.phone-shell video{width:402px;height:930px;object-fit:fill;border-radius:41px;background:#fff;display:block}.feature{padding-right:40px}.num{font-size:26px;letter-spacing:.18em;color:#c45e0c;font-weight:700}.feature h2{margin-top:20px;font-size:70px;line-height:1.1;font-weight:560;letter-spacing:-.035em}.feature p{margin-top:28px;max-width:770px;font-size:31px;line-height:1.62;color:#66706b}.chips{display:flex;flex-wrap:wrap;gap:12px;margin-top:32px}.chip{padding:12px 19px;border-radius:999px;background:#dcece5;color:#164d3f;font-size:21px;font-weight:650}.chip.o{background:rgba(255,127,22,.13);color:#8f4308}.mark{position:absolute;right:42px;top:30px;font-size:17px;letter-spacing:.16em;color:#5d625f;font-weight:700}
+    .web{background:#17231f;padding:58px 70px 112px}.frame{position:absolute;left:70px;right:70px;top:58px;bottom:112px;border-radius:30px;overflow:hidden;background:#fff;box-shadow:0 28px 90px rgba(0,0,0,.28)}.frame img{width:100%;height:100%;object-fit:cover;object-position:top center;display:block}.bar{position:absolute;z-index:2;left:70px;right:70px;top:58px;height:54px;background:rgba(255,255,255,.94);border-bottom:1px solid #e2e5ea;display:flex;align-items:center;padding:0 22px;gap:9px}.dot{width:12px;height:12px;border-radius:50%;background:#d1d6d3}.url{margin-left:16px;height:30px;min-width:560px;border-radius:15px;background:#f5f6f8;color:#656d78;display:flex;align-items:center;padding:0 18px;font-size:15px}.label{position:absolute;z-index:4;left:102px;top:138px;padding:14px 20px;border-radius:12px;background:rgba(23,35,31,.94);color:#fff;font-size:26px;font-weight:700;box-shadow:0 12px 34px rgba(0,0,0,.18)}.label.orange{background:#9b4807}.focus{position:absolute;z-index:3;border:5px solid #ff7f16;border-radius:20px;box-shadow:0 0 0 9px rgba(255,127,22,.18)}
+    .caption{display:flex;align-items:flex-end;justify-content:center;pointer-events:none;padding-bottom:26px}.caption span{max-width:1530px;min-height:62px;padding:14px 30px;border-radius:18px;background:rgba(16,20,26,.9);color:#fff;font-size:28px;line-height:1.35;text-align:center;box-shadow:0 12px 32px rgba(0,0,0,.18)}.caption b{color:#ff9a48}.recap{background:#f5f4ef;padding:86px 110px}.recap h2{text-align:center;font-size:66px;font-weight:560;letter-spacing:-.035em}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:28px;margin-top:62px}.card{height:590px;border-radius:30px;overflow:hidden;background:#fffefa;border:1px solid #dfe3dc;box-shadow:0 18px 55px rgba(23,35,31,.1)}.card img{width:100%;height:450px;object-fit:cover;object-position:top}.phone-card{height:450px;display:grid;place-items:center;background:#17231f;color:#fff;font-size:48px;font-weight:700}.card .copy{padding:24px 26px}.copy strong{font-size:29px}.copy p{margin-top:8px;color:#66706b;font-size:20px}
+  </style>
+</head>
+<body>
+<div id="root" data-composition-id="main" data-start="0" data-duration="252" data-width="1920" data-height="1080">
+  <section id="title" class="clip title paper" data-start="0" data-duration="8" data-track-index="1"><div class="grain"></div><div><div class="eyebrow">LENSGO · FULL PRODUCT DEMONSTRATION</div><h1>从手机到后端，<em>一套完整的智能旅行系统。</em></h1><p>本地优先的澳门旅行助手，连接客流数据、酒店库存、账单与明确授权。</p></div><div class="orbit"><div class="ring"></div><div class="ring r2"></div><div class="ring r3"></div><div class="center">旅</div><div class="node n1">手机 App</div><div class="node n2">客流后台</div><div class="node n3">酒店后台</div></div><div class="route"></div></section>
+  <section id="phone" class="clip phone-stage paper" data-start="8" data-duration="132" data-track-index="1"><div class="grain"></div><div class="phone-shell"></div><div class="mark">LENSGO · LOCAL FIRST</div></section>
+  <video id="phone-media" class="clip" data-start="8" data-duration="132" data-playback-rate="1.35" data-track-index="2" src="media/lensgo-phone-demo.mp4" muted playsinline preload="auto" style="inset:auto;left:274px;top:63px;width:402px;height:930px;object-fit:fill;border-radius:41px;z-index:2"></video>
+  <section id="p1" class="clip phone-stage" data-start="8" data-duration="37" data-track-index="2"><div></div><div class="feature"><div class="num">01 · 本地中心</div><h2>运行状态，清清楚楚</h2><p>首页把本地数据、在线模型与 QwenPaw 的连接状态放在一起，旅行记忆由设备掌控。</p><div class="chips"><span class="chip">本地保存</span><span class="chip">模型可配置</span><span class="chip o">服务在线</span></div></div></section>
+  <section id="p2" class="clip phone-stage" data-start="45" data-duration="15" data-track-index="2"><div></div><div class="feature"><div class="num">02 · AI 对话</div><h2>主 Agent，理解完整旅程</h2><p>继续历史对话、新建会话、发送文字或图片，让助手基于行程上下文给出建议。</p><div class="chips"><span class="chip">历史会话</span><span class="chip">图片输入</span><span class="chip o">QwenPaw</span></div></div></section>
+  <section id="p3" class="clip phone-stage" data-start="60" data-duration="15" data-track-index="2"><div></div><div class="feature"><div class="num">03 · 旅程地图</div><h2>路线与客流联动</h2><p>路线点、下一站与位置提醒集中呈现；更新客流后可据此避开拥挤地点并调整计划。</p><div class="chips"><span class="chip">6 个路线点</span><span class="chip">位置提醒</span><span class="chip o">客流更新</span></div></div></section>
+  <section id="p4" class="clip phone-stage" data-start="75" data-duration="22" data-track-index="2"><div></div><div class="feature"><div class="num">04 · 旅行账单</div><h2>预算、分类与明细</h2><p>统一记录必要与可选支出，预算总额、已花费用和剩余额度一目了然。</p><div class="chips"><span class="chip">预算总览</span><span class="chip">消费明细</span><span class="chip o">必要 / 可选</span></div></div></section>
+  <section id="p5" class="clip phone-stage" data-start="97" data-duration="8" data-track-index="2"><div></div><div class="feature"><div class="num">05 · 本地相册</div><h2>旅行记忆默认不上云</h2><p>照片与地图视图只在设备中整理，只有用户主动操作时才会进行云端同步。</p><div class="chips"><span class="chip">照片视图</span><span class="chip">地图视图</span><span class="chip o">手动同步</span></div></div></section>
+  <section id="p6" class="clip phone-stage" data-start="105" data-duration="35" data-track-index="2"><div></div><div class="feature"><div class="num">06 · 权限与设置</div><h2>每一种外部能力，都可控制</h2><p>模型配置、Agent 数据权限、客流服务、设备标识和隐私说明集中管理。</p><div class="chips"><span class="chip">数据权限</span><span class="chip">服务地址</span><span class="chip o">隐私优先</span></div></div></section>
+
+  <section id="w1" class="clip web" data-start="140" data-duration="10" data-track-index="1"><div class="frame"><img src="media/crowd-map.png" alt="地图发布"></div><div class="bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><div class="url">47.82.123.50:18001 · LensGo 数据发布后台</div></div><div class="label orange">01 · 地图发布</div><div class="focus" style="left:105px;top:220px;width:650px;height:530px"></div></section>
+  <section id="w2" class="clip web" data-start="150" data-duration="10" data-track-index="1"><div class="frame"><img src="media/crowd-bus.png" alt="巴士报站"></div><div class="bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><div class="url">47.82.123.50:18001 · 巴士报站模拟</div></div><div class="label orange">02 · 巴士报站</div></section>
+  <section class="clip web" data-start="160" data-duration="6" data-track-index="1"><div class="frame"><img src="media/crowd-batch.png" alt="批量发布"></div><div class="label orange">03 · 批量发布</div></section>
+  <section class="clip web" data-start="166" data-duration="6" data-track-index="1"><div class="frame"><img src="media/crowd-current.png" alt="当前数据"></div><div class="label orange">04 · 当前数据</div></section>
+  <section class="clip web" data-start="172" data-duration="6" data-track-index="1"><div class="frame"><img src="media/crowd-history.png" alt="发布历史"></div><div class="label orange">05 · 发布历史</div></section>
+  <section class="clip web" data-start="178" data-duration="6" data-track-index="1"><div class="frame"><img src="media/crowd-add-place.png" alt="新增地点"></div><div class="label orange">06 · 新增地点</div></section>
+  <section class="clip web" data-start="184" data-duration="6" data-track-index="1"><div class="frame"><img src="media/crowd-api.png" alt="API 说明"></div><div class="label orange">07 · HTTP API</div></section>
+  <section id="h1" class="clip web" data-start="190" data-duration="20" data-track-index="1"><div class="frame"><img src="media/hotel-home.png" alt="酒店搜索"></div><div class="bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><div class="url">47.82.123.50:18002 · 旅屿酒店预订</div></div><div class="label">01 · 搜索与比较</div></section>
+  <section id="h2" class="clip web" data-start="210" data-duration="15" data-track-index="1"><div class="frame"><img src="media/hotel-bills.png" alt="酒店账单"></div><div class="bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><div class="url">47.82.123.50:18002 · 账单与付款授权</div></div><div class="label">02 · 账单与一次性授权</div></section>
+  <section id="h3" class="clip web" data-start="225" data-duration="15" data-track-index="1"><div class="frame"><img src="media/hotel-workbench.png" alt="酒店工作台"></div><div class="bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><div class="url">47.82.123.50:18002 · 酒店价格库存工作台</div></div><div class="label">03 · 价格与库存</div></section>
+  <section id="recap" class="clip recap" data-start="240" data-duration="12" data-track-index="1"><div class="grain"></div><div class="eyebrow" style="text-align:center">END-TO-END · TRUSTED BY DESIGN</div><h2>一套系统，三个可信环节</h2><div class="grid"><div class="card"><div class="phone-card">LensGo App</div><div class="copy"><strong>本地优先</strong><p>行程、对话、账单、照片与权限</p></div></div><div class="card"><img src="media/crowd-current.png" alt="客流后台"><div class="copy"><strong>数据可追溯</strong><p>发布、验证、历史与 API</p></div></div><div class="card"><img src="media/hotel-workbench.png" alt="酒店后台"><div class="copy"><strong>交易受控</strong><p>库存、账单、审计与明确授权</p></div></div></div></section>
+
+  <div class="clip caption" data-start="0" data-duration="8" data-track-index="3"><span><b>LensGo 全功能演示</b>｜手机 App、客流数据后台与酒店预订后台</span></div>
+  <div class="clip caption" data-start="8" data-duration="37" data-track-index="3"><span>核心旅行数据保存在设备上；需要在线能力时，再连接模型和 QwenPaw 服务。</span></div>
+  <div class="clip caption" data-start="45" data-duration="15" data-track-index="3"><span>主旅行 Agent 支持历史会话、文字和图片输入，并理解完整行程上下文。</span></div>
+  <div class="clip caption" data-start="60" data-duration="15" data-track-index="3"><span>旅程地图展示路线、下一站和位置提醒，并可读取实时客流调整计划。</span></div>
+  <div class="clip caption" data-start="75" data-duration="22" data-track-index="3"><span>账单统一管理预算与明细，区分必要和可选支出。</span></div>
+  <div class="clip caption" data-start="97" data-duration="8" data-track-index="3"><span>相册默认只保存在手机，云端同步必须由用户主动触发。</span></div>
+  <div class="clip caption" data-start="105" data-duration="35" data-track-index="3"><span>模型、Agent 数据权限、客流服务和隐私策略，都能单独查看与控制。</span></div>
+  <div class="clip caption" data-start="140" data-duration="10" data-track-index="3"><span><b>地图发布：</b>选择地点，填写人数与拥挤度，生成移动端可读取的客流数据。</span></div>
+  <div class="clip caption" data-start="150" data-duration="10" data-track-index="3"><span><b>巴士报站：</b>模拟车辆位置、到站时间、延误和车内拥挤度。</span></div>
+  <div class="clip caption" data-start="160" data-duration="30" data-track-index="3"><span>批量发布、当前数据、历史、新增地点和 API，共同完成运营、追溯与系统接入。</span></div>
+  <div class="clip caption" data-start="190" data-duration="20" data-track-index="3"><span><b>酒店搜索：</b>按目的地、日期和人数读取真实库存，比较完整入住价格。</span></div>
+  <div class="clip caption" data-start="210" data-duration="15" data-track-index="3"><span>AI 默认没有付款权；一次性授权、版本变化与支付结果都有审计记录。</span></div>
+  <div class="clip caption" data-start="225" data-duration="15" data-track-index="3"><span>酒店工作台维护未来十四天的房量和价格，实时成为搜索的可信数据源。</span></div>
+  <div class="clip caption" data-start="240" data-duration="12" data-track-index="3"><span>LensGo：本地优先、数据可追溯、交易受控。</span></div>
+</div>
+<script>
+  window.__timelines=window.__timelines||{};
+  const tl=gsap.timeline({paused:true});
+  tl.from("#title h1",{opacity:0,y:48,duration:.8,ease:"power3.out"},.15)
+    .from("#title p",{opacity:0,y:30,duration:.7,ease:"power3.out"},.42)
+    .from("#title .orbit",{opacity:0,scale:.86,duration:.9,ease:"power3.out"},.2)
+    .from("#title .route",{scaleX:0,duration:1.1,ease:"power2.inOut"},.5)
+    .from("#phone .phone-shell",{opacity:0,x:-80,duration:.8,ease:"power3.out"},8.05)
+    .from("#p1 .feature",{opacity:0,x:70,duration:.65,ease:"power3.out"},8.2)
+    .from("#p2 .feature",{opacity:0,x:70,duration:.55,ease:"power3.out"},45.05)
+    .from("#p3 .feature",{opacity:0,x:70,duration:.55,ease:"power3.out"},60.05)
+    .from("#p4 .feature",{opacity:0,x:70,duration:.55,ease:"power3.out"},75.05)
+    .from("#p5 .feature",{opacity:0,x:70,duration:.55,ease:"power3.out"},97.05)
+    .from("#p6 .feature",{opacity:0,x:70,duration:.55,ease:"power3.out"},105.05)
+    .from("#w1 .frame",{opacity:0,scale:.96,duration:.65,ease:"power2.out"},140.05)
+    .to("#w1 .frame img",{scale:1.025,duration:9.8,ease:"none"},140.1)
+    .from("#w2 .frame",{opacity:0,x:80,duration:.6,ease:"power2.out"},150.05)
+    .from("#h1 .frame",{opacity:0,scale:.96,duration:.65,ease:"power2.out"},190.05)
+    .to("#h1 .frame img",{scale:1.03,duration:19.5,ease:"none"},190.1)
+    .from("#h2 .frame",{opacity:0,x:80,duration:.6,ease:"power2.out"},210.05)
+    .from("#h3 .frame",{opacity:0,x:80,duration:.6,ease:"power2.out"},225.05)
+    .from("#recap h2",{opacity:0,y:30,duration:.65,ease:"power3.out"},240.1)
+    .from("#recap .card",{opacity:0,y:55,stagger:.14,duration:.7,ease:"power3.out"},240.4);
+  window.__timelines.main=tl;
+</script>
+</body>
+</html>

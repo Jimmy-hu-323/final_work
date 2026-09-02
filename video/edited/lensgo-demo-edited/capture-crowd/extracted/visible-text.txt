@@ -1,0 +1,291 @@
+[h1] LensGo 模拟数据发布器
+[span] 服务正常
+[span] 4 城市 · 18 区 · 12 街道 · 40 景点 · 12 条读数
+[span] 本机可写入
+[h2] 在地图上发布
+[p] 搜索高德上的任意地点，地图会跳过去；也可以直接点击地图上任何位置，
+        自动反查地址。选中后填人数即可发布，地点会同时登记进本库。
+[label] 限定城市
+[option] 不限定
+[label] 搜索地点
+[button] 刷新已有数据
+[div] 搜索结果会显示在这里。
+[div] 也可以直接在右侧地图上点击任意位置。
+[a] Leaflet
+[div] 高德地图 GCJ-02
+[strong] 已选位置
+[label] 拥挤度
+[option] 0 空旷
+[option] 1 较少
+[option] 2 适中
+[option] 3 拥挤
+[option] 4 非常拥挤
+[button] 发布这个位置的人数
+[span] 非常拥挤
+[div] 当前全部巴士位置、到站时间和拥挤度均为人工模拟数据，只用于 LensGo 功能演示，
+      不可作为实际乘车依据，也不代表澳门交通事务局数据。
+[h2] 发布模拟巴士
+[p] 可以手动发布一次，也可以启动自动模拟，让车辆按设定速度沿站点持续前进。
+[label] 车辆编号
+[label] 当前所在站
+[label] 驶向下一站进度（%）
+[label] 车辆状态
+[option] 行驶中
+[option] 停站中
+[option] 模拟已暂停
+[option] 已停止服务
+[label] 车内拥挤度
+[option] 非常拥挤
+[label] 延误（分钟）
+[label] 行驶速度（km/h）
+[strong] 自动模拟设置
+[label] 每隔几秒发布
+[label] 每站模拟用时（秒）
+[button] 发布一次
+[button] 开始自动模拟
+[button] 停止车辆
+[span] 未运行
+[h2] 路线站点
+[p] 到站时间按路线分钟数、车辆进度和延误量计算。
+[div] 请选择路线
+[h2] 当前车辆与报站结果
+[p] 展示当前路线已经发布的最新车辆状态。
+[th] 当前位置
+[th] 下一站
+[th] 预计到站
+[th] 余下站数
+[th] 拥挤度
+[th] 更新于
+[td] 尚未加载
+[h2] 1. 搜索城市与景点
+[p] 先选城市，再按名称搜索区 / 街道 / 景点。中文名、英文名和别名都能搜。
+[button] 添加当前结果
+[div] 嘉模堂区
+[div] 澳门 · macau-d-carmo
+[div] 圣安多尼堂区
+[div] 澳门 · macau-d-santo-antonio
+[div] 圣方济各堂区
+[div] 澳门 · macau-d-sao-francisco
+[div] 大堂区
+[div] 澳门 · macau-d-se
+[div] 望德堂区
+[div] 澳门 · macau-d-sao-lazaro
+[div] 花地玛堂区
+[div] 澳门 · macau-d-fatima
+[div] 路氹填海区
+[div] 澳门 · macau-d-cotai
+[div] 风顺堂区
+[div] 澳门 · macau-d-sao-lourenco
+[div] 十月初五日街
+[div] 澳门 · 圣安多尼堂区 · macau-s-cinco-outubro
+[div] 卖草地街
+[div] 澳门 · 圣安多尼堂区 · macau-s-palha
+[div] 友谊大马路
+[div] 澳门 · 大堂区 · macau-s-amizade
+[div] 地堡街
+[div] 澳门 · 嘉模堂区 · macau-s-braganca
+[div] 大三巴街
+[div] 澳门 · 圣安多尼堂区 · macau-s-sao-paulo
+[div] 官也街
+[div] 澳门 · 嘉模堂区 · macau-s-cunha
+[div] 新马路
+[div] 澳门 · 大堂区 · macau-s-almeida-ribeiro
+[div] 板樟堂前地
+[div] 澳门 · 圣安多尼堂区 · macau-s-sao-domingos
+[div] 福隆新街
+[div] 澳门 · 大堂区 · macau-s-felicidade
+[div] 荷兰园大马路
+[div] 澳门 · 望德堂区 · macau-s-ferreira-almeida
+[div] 路环市区
+[div] 澳门 · 圣方济各堂区 · macau-s-coloane-vila
+[div] 高士德大马路
+[div] 澳门 · 花地玛堂区 · macau-s-horta-costa
+[div] 东望洋灯塔
+[div] 澳门 · 望德堂区 · macau-poi-guia-fortress
+[div] 伦敦人
+[div] 澳门 · 路氹填海区 · macau-poi-londoner
+[div] 卢廉若公园
+[div] 澳门 · 望德堂区 · macau-poi-lou-lim-ioc
+[div] 嘉模圣母堂
+[div] 澳门 · 嘉模堂区 · macau-poi-carmel-church
+[div] 圣方济各圣堂
+[div] 澳门 · 路环市区 · macau-poi-st-francis-chapel
+[div] 大三巴牌坊
+[div] 澳门 · 大三巴街 · macau-poi-ruins-st-paul
+[div] 大炮台
+[div] 澳门 · 圣安多尼堂区 · macau-poi-mount-fortress
+[div] 妈阁庙
+[div] 澳门 · 风顺堂区 · macau-poi-a-ma-temple
+[div] 威尼斯人
+[div] 澳门 · 路氹填海区 · macau-poi-venetian
+[div] 安德鲁饼店
+[div] 澳门 · 路环市区 · macau-poi-lord-stows
+[div] 巴黎人
+[div] 澳门 · 路氹填海区 · macau-poi-parisian
+[div] 市政署大楼
+[div] 澳门 · 新马路 · macau-poi-leal-senado
+[div] 新葡京
+[div] 澳门 · 大堂区 · macau-poi-grand-lisboa
+[div] 渔人码头
+[div] 澳门 · 友谊大马路 · macau-poi-fishermans-wharf
+[div] 澳门博物馆
+[div] 澳门 · 圣安多尼堂区 · macau-poi-macao-museum
+[div] 澳门大学
+[div] 澳门 · 路氹填海区 · macau-poi-university
+[div] 澳门旅游塔
+[div] 澳门 · 风顺堂区 · macau-poi-macau-tower
+[div] 澳门科学馆
+[div] 澳门 · 大堂区 · macau-poi-science-center
+[div] 玫瑰堂
+[div] 澳门 · 板樟堂前地 · macau-poi-st-dominic
+[div] 竹湾海滩
+[div] 澳门 · 圣方济各堂区 · macau-poi-cheoc-van
+[div] 议事亭前地
+[div] 澳门 · 新马路 · macau-poi-senado-square
+[div] 银河综合渡假城
+[div] 澳门 · 路氹填海区 · macau-poi-galaxy
+[div] 黑沙海滩
+[div] 澳门 · 圣方济各堂区 · macau-poi-hac-sa
+[div] 龙环葡韵
+[div] 澳门 · 嘉模堂区 · macau-poi-taipa-houses
+[h2] 2. 填写人数并发布
+[p] 留空拥挤度＝按人数和区域层级自动推导。一次发布为一个批次，可整批撤销。
+[button] 随机填充
+[button] 清空清单
+[span] 0 项
+[div] 还没有选择区域，从左侧点击「添加」。
+[label] 发布者
+[label] 观测时间
+[label] 备注（可选）
+[h2] 当前最新数据
+[p] 每个区域取最新一条读数。「无数据」和「0 人」是两种不同状态，颜色也不同。
+[option] 全部城市
+[option] 只看有数据的
+[option] 包含无数据
+[span] 非常拥挤
+[span] 无数据
+[th] 拥挤度
+[th] 更新于
+[td] 加载中…
+[h2] 发布历史
+[p] 撤销会删除该批次写入的全部读数，批次记录本身保留痕迹。
+[th] 发布者
+[td] 加载中…
+[h2] 新增区 / 街道 / 景点
+[p] 坐标可以填 WGS-84（从 GPS、维基、OSM 抄来的）或 GCJ-02（高德上取的），
+        选对来源即可，服务端会统一转成 GCJ-02 入库。
+[label] 英文名（可选）
+[label] 别名（可选，逗号分隔）
+[label] 上级区域（可选）
+[option] （无）
+[label] 经度 lng
+[label] 纬度 lat
+[label] 坐标系
+[option] WGS-84（GPS / OSM）
+[option] GCJ-02（高德）
+[label] 影响半径（米，可选）
+[h2] HTTP 接口
+[p] 所有响应都是 JSON。坐标一律为
+[code] GCJ-02
+[code] [lng, lat]
+[p] ，与主项目高德底图一致。
+        读接口默认公开；写接口在未设置
+[code] CROWD_WRITE_TOKEN
+[p] 时只接受本机请求。
+[span] GET
+[code] /api/health
+[td] 服务状态与数据量统计
+[span] GET
+[code] /api/meta
+[td] 层级、拥挤度分级、推导阈值、当前权限
+[span] GET
+[code] /api/cities?q=
+[td] 搜索城市
+[span] GET
+[code] /api/regions?city_id=&level=&q=&limit=&offset=
+[td] 搜索区 / 街道 / 景点
+[span] GET
+[code] /api/regions/{id}
+[td] 区域详情
+[span] GET
+[code] /api/regions/{id}/history
+[td] 该区域的历史读数
+[span] GET
+[code] /api/density/latest?city_id=&level=&include_empty=
+[strong] 地图页主接口
+[td] ：每区域最新密度
+[span] GET
+[code] /api/amap/status
+[td] 高德 Key 是否已配置
+[span] GET
+[code] /api/amap/search?q=&city=
+[td] 高德 POI 关键字搜索（服务端代理）
+[span] GET
+[code] /api/amap/around?lng=&lat=&radius=
+[td] 高德周边搜索
+[span] GET
+[code] /api/amap/regeo?lng=&lat=
+[td] 逆地理编码（坐标 → 地址）
+[span] POST
+[code] /api/regions/from-amap
+[td] 把高德地点登记为可发布区域（同一 POI 不重复建）
+[span] POST
+[code] /api/readings
+[td] 发布一批数据（一次 = 一个批次）
+[span] GET
+[code] /api/batches
+[td] 发布历史
+[span] DELETE
+[code] /api/batches/{id}
+[td] 撤销批次
+[span] POST
+[code] /api/cities
+[code] /api/regions
+[td] 新增城市 / 区域
+[h2] 调用示例
+[p] 发布数据：
+[pre] curl -X POST http://47.82.123.50:18001/api/readings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "publisher": "sensor-sim",
+    "note": "周末下午",
+    "items": [
+      { "region_id": "macau-poi-ruins-st-paul", "people_count": 860 },
+      { "region_id": "macau-s-cunha", "people_count": 430, "crowd_level": 3 }
+    ]
+  }'
+[p] 地图前端读取最新密度：
+[pre] curl "http://47.82.123.50:18001/api/density/latest?city_id=macau&level=poi&include_empty=0"
+[p] 返回结构（节选）：
+[pre] {
+  "generated_at": "2026-07-26T12:00:00Z",
+  "count": 24,
+  "items": [
+    {
+      "region_id": "macau-poi-ruins-st-paul",
+      "name": "大三巴牌坊",
+      "level": "poi",
+      "parent_id": "macau-s-sao-paulo",
+      "center": [113.5457, 22.1947],
+      "coord_system": "gcj02",
+      "radius_m": 120,
+      "geometry": null,
+      "reading": {
+        "people_count": 860,
+        "crowd_level": 3,
+        "observed_at": "2026-07-26T11:58:00Z",
+        "batch_id": "batch_9ae953c3aa39"
+      }
+    }
+  ]
+}
+[code] reading
+[code] null
+[p] 表示该区域**没有数据**，
+        请勿当作 0 人渲染。
+[code] geometry
+[p] 目前为 null，
+        当前版本用
+[code] center
+[code] radius_m
+[p] 作为落点，后续补入区域多边形后即可直接画色块。

@@ -1,0 +1,158 @@
+[small] STAY WITH CLARITY
+[a] API
+[small] 旅行者
+[strong] AI 可以帮你找房和整理账单
+[span] 付款权限默认关闭，只有你能授予。
+[button] 查看权限
+[span] AI-NATIVE HOTEL BOOKING
+[h1] 把住宿订得
+[em] 清楚，也从容。
+[p] 真实库存、完整价格与明确授权。你负责决定，AI 负责把复杂的旅程整理好。
+[span] 实时报价
+[span] 库存锁定
+[span] 用户付款
+[small] 已连接
+[span] 目的地
+[small] 澳门特别行政区
+[small] 9月3日周四
+[small] 9月5日周六
+[option] 1 位成人
+[option] 2 位成人
+[option] 3 位住客
+[option] 4 位住客
+[small] 1 间客房
+[span] 搜索可订酒店
+[span] LIVE AVAILABILITY
+[h2] 现在可订的好住处
+[p] 家匹配 ·
+[p] 9月3日周四
+[p] 9月5日周六
+[div] MACAU · STAY
+[span] 4.8
+[span] 路氹金光大道
+[h3] 澳门永利皇宫
+[strong] ¥4,722
+[small] 本次入住
+[p] 人工湖上的缆车与表演湖，房间和服务是路氹里公认最讲究的一档。
+[span] 观光缆车
+[span] 表演湖
+[span] 米其林餐厅
+[div] 间 ·
+[div] 湖景豪华客房
+[button] 查看并生成账单
+[div] MACAU · STAY
+[span] 4.7
+[span] 澳门半岛
+[h3] 澳门文华东方酒店
+[strong] ¥4,322
+[small] 本次入住
+[p] 南湾湖畔的安静选择，没有赌场，房间视野和早餐是它的口碑所在。
+[span] 无赌场
+[div] 间 ·
+[div] 海景客房
+[button] 查看并生成账单
+[div] MACAU · STAY
+[span] 4.6
+[span] 路氹金光大道
+[h3] 澳门威尼斯人
+[strong] ¥3,522
+[small] 本次入住
+[p] 室内运河与贡多拉船，购物、演出和餐饮都在同一栋楼里，适合第一次来澳门。
+[span] 贡多拉船
+[span] 大运河购物中心
+[span] 室外泳池
+[div] 间 ·
+[div] 皇室套房
+[button] 查看并生成账单
+[div] MACAU · STAY
+[span] 4.6
+[span] 路氹金光大道
+[h3] 澳门巴黎人
+[strong] ¥2,922
+[small] 本次入住
+[p] 半比例埃菲尔铁塔就在门口，夜间灯光秀是路氹最好认的地标。
+[span] 铁塔观景台
+[span] 水上乐园
+[div] 间 ·
+[div] 巴黎人客房
+[button] 查看并生成账单
+[div] MACAU · STAY
+[span] 4.5
+[span] 路氹金光大道
+[h3] 澳门新濠影汇
+[strong] ¥2,522
+[small] 本次入住
+[p] 以电影为主题，8 字形摩天轮和水上乐园让它在亲子行程里很吃香。
+[span] 影汇之星摩天轮
+[span] 水上乐园
+[div] 间 ·
+[div] 明星汇客房
+[button] 查看并生成账单
+[div] MACAU · STAY
+[span] 4.5
+[span] 澳门半岛
+[h3] 澳门新葡京酒店
+[strong] ¥3,722
+[small] 本次入住
+[p] 澳门半岛最显眼的地标建筑，出门就是新马路与历史城区方向。
+[span] 地标建筑
+[span] 米其林餐厅
+[span] 24 小时礼宾
+[div] 间 ·
+[div] 豪华客房
+[button] 查看并生成账单
+[div] MACAU · STAY
+[span] 4.4
+[h3] 澳门威斯汀度假酒店
+[strong] ¥2,122
+[small] 本次入住
+[p] 直接连着黑沙海滩，远离赌场区，是澳门少见的度假节奏。
+[span] 高尔夫
+[div] 间 ·
+[div] 海景露台房
+[button] 查看并生成账单
+[div] MACAU · STAY
+[span] 4.4
+[span] 澳门半岛 · 内港
+[h3] 澳门十六浦索菲特
+[strong] ¥2,322
+[small] 本次入住
+[p] 内港老城区一侧，步行去大三巴和福隆新街都很近，价格比路氹温和。
+[span] 近大三巴
+[div] 间 ·
+[div] 豪华客房
+[button] 查看并生成账单
+[div] MACAU · STAY
+[span] 4.3
+[h3] 澳门丽景湾艺术酒店
+[strong] ¥1,602
+[small] 本次入住
+[p] 氹仔旧城边上的中价选择，走去官也街吃小吃只要几分钟。
+[span] 近官也街
+[span] 室外泳池
+[span] 行李寄存
+[div] 间 ·
+[div] 高级双床房
+[button] 查看并生成账单
+[div] MACAU · STAY
+[span] 4.2
+[span] 澳门半岛
+[h3] 澳门皇都酒店
+[strong] ¥1,402
+[small] 本次入住
+[p] 松山脚下的老牌四星，预算有限又想住半岛时最稳的一档。
+[span] 高性价比
+[span] 近松山
+[span] 室内泳池
+[div] 间 ·
+[div] 标准双床房
+[button] 查看并生成账单
+[span] BUILT FOR HUMANS & AGENTS
+[h2] AI 能做很多事，
+[h2] 但不能替你花钱。
+[strong] 搜索与比较
+[span] AI 读取结构化价格、库存和政策，不猜测页面内容。
+[strong] 整理统一账单
+[span] 房费、服务费和附加项目集中展示，修改后重新报价。
+[strong] 由你确认付款
+[span] 默认由你直接支付；AI 代理支付需要一次性限额授权。

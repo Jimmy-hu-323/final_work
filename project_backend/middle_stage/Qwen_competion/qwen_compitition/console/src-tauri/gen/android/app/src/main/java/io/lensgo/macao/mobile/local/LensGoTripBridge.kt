@@ -6,6 +6,7 @@ import android.app.Activity
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ContentValues
 import android.content.Intent
@@ -24,6 +25,7 @@ import android.provider.MediaStore
 import android.speech.tts.TextToSpeech
 import android.util.Base64
 import android.webkit.JavascriptInterface
+import android.widget.Toast
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -128,6 +130,41 @@ class LensGoTripBridge(
   @JavascriptInterface
   fun capturePhotoToGallery(): Boolean {
     activity.runOnUiThread { startCameraCapture() }
+    return true
+  }
+
+  /**
+   * Opens a LensGo-generated AMap navigation URL outside this WebView. Keeping
+   * the URL in a separate Android activity is important: loading AMap inside
+   * LensGo would replace the React application and make the app appear frozen.
+   */
+  @JavascriptInterface
+  fun openExternalNavigation(url: String): Boolean {
+    val uri = runCatching { Uri.parse(url.trim()) }.getOrNull() ?: return false
+    val allowed =
+      uri.scheme.equals("https", ignoreCase = true) &&
+        uri.host.equals("uri.amap.com", ignoreCase = true) &&
+        uri.path.equals("/navigation", ignoreCase = true)
+    if (!allowed) return false
+
+    activity.runOnUiThread {
+      val nativeIntent = Intent(Intent.ACTION_VIEW, uri).apply {
+        addCategory(Intent.CATEGORY_BROWSABLE)
+        setPackage(AMAP_PACKAGE)
+      }
+      try {
+        activity.startActivity(nativeIntent)
+      } catch (_: ActivityNotFoundException) {
+        val browserIntent = Intent(Intent.ACTION_VIEW, uri).apply {
+          addCategory(Intent.CATEGORY_BROWSABLE)
+        }
+        try {
+          activity.startActivity(browserIntent)
+        } catch (_: ActivityNotFoundException) {
+          Toast.makeText(activity, "未找到可打开导航的应用", Toast.LENGTH_LONG).show()
+        }
+      }
+    }
     return true
   }
 
@@ -439,6 +476,7 @@ class LensGoTripBridge(
   }
 
   companion object {
+    private const val AMAP_PACKAGE = "com.autonavi.minimap"
     private const val CHANNEL_ID = "lensgo_trip_alerts"
     private const val NOTIFICATION_PERMISSION_REQUEST = 4102
     const val LOCATION_PERMISSION_REQUEST = 4103
